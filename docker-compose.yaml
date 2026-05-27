@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: mx-mail-api-postgres
     restart: unless-stopped
+    networks:
+      - mx-mail-api
     environment:
       POSTGRES_DB: mx_mail_api
       POSTGRES_USER: mx_mail_api
@@ -24,11 +26,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - mx-mail-api
     ports:
       - "8080:8080"
-      - "2525:2525"
+      - "25:2525"
     volumes:
       - ./docker/config.yaml:/app/config.yaml:ro
 
 volumes:
   postgres_data:
+
+networks:
+  mx-mail-api:
+    driver: bridge

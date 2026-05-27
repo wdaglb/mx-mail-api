@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"mx-mail-api/internal/config"
 	"mx-mail-api/internal/repository"
@@ -28,11 +29,14 @@ type DomainService struct {
 }
 
 type domainLookupTXT func(ctx context.Context, name string) ([]string, error)
+type txtLookupFunc func(ctx context.Context, name string) ([]string, error)
 
 const (
 	domainVerificationLabelLength = 12
 	domainVerificationAlphabet    = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
+
+var fallbackDNSServers = []string{"223.5.5.5:53", "1.1.1.1:53", "8.8.8.8:53"}
 
 /**
  * DomainVerification 表示一次域名 TXT 所有权校验所需的信息。
@@ -209,7 +213,7 @@ func (service *DomainService) VerifyDomainOwnership(ctx context.Context, user st
 
 	lookup := service.lookupTXT
 	if lookup == nil {
-		lookup = net.DefaultResolver.LookupTXT
+		lookup = lookupTXTWithFallback
 	}
 	records, err := lookup(ctx, name)
 	if err != nil {
@@ -222,6 +226,73 @@ func (service *DomainService) VerifyDomainOwnership(ctx context.Context, user st
 	}
 
 	return ErrDomainVerification
+}
+
+/**
+ * lookupTXTWithFallback 查询 TXT 记录，并在系统 DNS 不可用时回退到公共 DNS。
+ *
+ * 参数：
+ * - ctx：业务操作上下文。
+ * - name：完整 TXT 记录名。
+ * 返回值：DNS 返回的 TXT 记录数组。
+ * 失败条件：系统 DNS 和备用 DNS 均不可用，或记录不存在时返回最后一次查询错误。
+ */
+func lookupTXTWithFallback(ctx context.Context, name string) ([]string, error) {
+	fallbacks := make([]txtLookupFunc, 0, len(fallbackDNSServers))
+	for _, server := range fallbackDNSServers {
+		resolver := publicDNSResolver(server)
+		fallbacks = append(fallbacks, resolver.LookupTXT)
+	}
+
+	return lookupTXTWithResolvers(ctx, name, net.DefaultResolver.LookupTXT, fallbacks)
+}
+
+/**
+ * lookupTXTWithResolvers 按系统 DNS、备用 DNS 的顺序查询 TXT 记录。
+ *
+ * 参数：
+ * - ctx：业务操作上下文。
+ * - name：完整 TXT 记录名。
+ * - systemLookup：系统默认 TXT 查询函数。
+ * - fallbackLookups：备用 DNS 查询函数列表，按优先级顺序执行。
+ * 返回值：首个成功解析器返回的 TXT 记录数组。
+ * 失败条件：全部解析器均失败时返回最后一次错误。
+ */
+func lookupTXTWithResolvers(ctx context.Context, name string, systemLookup txtLookupFunc, fallbackLookups []txtLookupFunc) ([]string, error) {
+	records, err := systemLookup(ctx, name)
+	if len(records) > 0 || err == nil {
+		return records, err
+	}
+
+	lastErr := err
+	for _, lookup := range fallbackLookups {
+		records, err = lookup(ctx, name)
+		if len(records) > 0 || err == nil {
+			return records, err
+		}
+		lastErr = err
+	}
+
+	return nil, lastErr
+}
+
+/**
+ * publicDNSResolver 创建指向指定 DNS 服务器的 Go Resolver。
+ *
+ * 参数：
+ * - server：DNS 服务器地址，例如 "1.1.1.1:53"。
+ * 返回值：只用于域名所有权验证兜底查询的 Resolver。
+ * 失败条件：无；网络错误会在实际 LookupTXT 时返回。
+ */
+func publicDNSResolver(server string) *net.Resolver {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network string, _ string) (net.Conn, error) {
+			// 默认优先使用系统 DNS；只有系统解析器失败时才进入这里，避免本机 127.0.0.53 异常影响公网 TXT 验证。
+			return dialer.DialContext(ctx, network, server)
+		},
+	}
 }
 
 /**
