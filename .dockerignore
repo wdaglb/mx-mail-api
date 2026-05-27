@@ -1,0 +1,10 @@
+.git
+.idea
+.DS_Store
+server/tmp
+server/*.log
+web/node_modules
+web/dist
+web/.rsbuild
+web/.rspack-profile-*
+docker-compose.override.yaml

@@ -1,0 +1,34 @@
+# macOS 本地文件，避免系统自动生成的目录元数据进入仓库。
+.DS_Store
+
+# IDE 与编辑器配置通常包含个人路径、窗口状态或插件缓存，不作为项目源码提交。
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# 环境变量和本地覆盖配置可能包含密钥、端口和数据库信息，仅允许提交示例文件。
+.env
+.env.*
+!.env.example
+*.local
+config.local.yaml
+docker-compose.override.yaml
+
+# Go 构建、测试和运行期产物，避免把二进制、覆盖率报告和临时目录提交。
+*.test
+*.out
+coverage.out
+server/tmp/
+server/*.log
+
+# 前端依赖、构建产物和打包分析文件均可由锁文件和构建命令重新生成。
+web/node_modules/
+web/dist/
+web/.rsbuild/
+web/.rspack-profile-*/
+
+# 通用日志与运行缓存，避免调试输出污染提交。
+*.log
+*.log.*
+tmp/
+temp/

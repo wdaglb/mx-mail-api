@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mx-mail-api-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mx_mail_api
+      POSTGRES_USER: mx_mail_api
+      POSTGRES_PASSWORD: mx_mail_api_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mx_mail_api -d mx_mail_api"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mx-mail-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "2525:2525"
+    volumes:
+      - ./docker/config.yaml:/app/config.yaml:ro
+
+volumes:
+  postgres_data:

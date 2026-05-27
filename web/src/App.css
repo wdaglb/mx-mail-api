@@ -1,0 +1,230 @@
+body {
+  margin: 0;
+  color: #1f2937;
+  font-family:
+    Inter, Avenir, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei',
+    sans-serif;
+  background: #f5f7fb;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  height: 50px;
+  min-height: 50px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 24px;
+  background: #fff;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.user-profile-button {
+  height: 34px;
+  padding-inline: 12px;
+  background: #f8fafc;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.user-profile-button:hover,
+.user-profile-button:focus {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.user-profile-avatar {
+  color: #fff;
+  background: #2563eb;
+}
+
+.app-title {
+  font-size: 18px !important;
+  line-height: 22px !important;
+  margin: 0 !important;
+}
+
+.app-subtitle {
+  display: none;
+  color: #6b7280;
+}
+
+.app-content {
+  min-width: 0;
+  padding: 24px 32px;
+}
+
+.app-body {
+  min-height: calc(100vh - 50px);
+}
+
+.app-sider {
+  background: #fff;
+  border-right: 1px solid #edf0f5;
+}
+
+.app-sider .ant-layout-sider-zero-width-trigger {
+  top: 12px;
+  background: #2563eb;
+}
+
+.app-sider .ant-menu {
+  border-inline-end: 0;
+  padding-top: 16px;
+}
+
+@media (width <= 720px) {
+  .app-header {
+    align-items: flex-start;
+    height: auto;
+    min-height: 50px;
+    padding: 8px 16px;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .app-content {
+    padding: 16px;
+  }
+
+  .app-body {
+    min-height: calc(100vh - 98px);
+  }
+}
+
+.login-page {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(135deg, #edf4ff, #f8fafc);
+}
+
+.boot-loading {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  box-shadow: 0 20px 60px rgb(15 23 42 / 10%);
+}
+
+.public-doc-page {
+  min-height: 100vh;
+  padding: 32px;
+  background: #f5f7fb;
+}
+
+.public-doc-card {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.api-doc-markdown {
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  padding: 16px;
+  color: #0f172a;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.api-doc-markdown pre {
+  overflow: auto;
+  padding: 12px;
+  background: #0f172a;
+  border-radius: 8px;
+}
+
+.api-doc-markdown code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
+
+.api-doc-markdown pre code {
+  color: #e2e8f0;
+}
+
+.api-doc-markdown :not(pre) > code {
+  padding: 2px 5px;
+  background: #e2e8f0;
+  border-radius: 4px;
+}
+
+.toolbar-form {
+  margin-bottom: 20px;
+}
+
+.toolbar-form .ant-form-item {
+  margin-bottom: 12px;
+}
+
+.dns-guide {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.dns-guide.compact {
+  margin-bottom: 0;
+}
+
+.dns-guide pre {
+  margin: 0;
+  padding: 10px 12px;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  background: #0f172a;
+  border-radius: 6px;
+}
+
+.dns-guide .dns-verification-value {
+  margin-top: 12px;
+}
+
+.api-key-token-block {
+  margin-top: 16px;
+}
+
+.api-key-copy-button {
+  margin-top: 12px;
+}
+
+.mailbox-inbox-address {
+  margin-bottom: 16px;
+}
+
+.mailbox-inbox-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.message-preview {
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  color: #0f172a;
+  white-space: pre-wrap;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.message-html-preview {
+  width: 100%;
+  min-height: 520px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}

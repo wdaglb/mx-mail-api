@@ -1,0 +1,18 @@
+http:
+  addr: ":8080"
+
+smtp:
+  addr: ":2525"
+  hostname: "mail.midos.top"
+
+database:
+  dsn: "host=localhost user=postgres password=123456 dbname=mx_mail_api port=5432 sslmode=disable"
+
+auth:
+  jwt_secret: "change-me-before-deploy"
+  token_ttl_hours: 24
+
+admin:
+  initial_user:
+    username: "admin"
+    password: "admin123456"
