@@ -18,6 +18,7 @@ export type Domain = {
   owner_user_id: number | null;
   owner_name: string;
   disabled: boolean;
+  mailbox_quota: number;
   created_at: string;
   updated_at: string;
 };
@@ -83,6 +84,7 @@ export type DomainFormValues = {
   domain: string;
   owner_user_id?: number | null;
   disabled?: boolean;
+  mailbox_quota?: number;
   verification_name?: string;
   verification_value?: string;
 };

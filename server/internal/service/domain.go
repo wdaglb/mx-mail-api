@@ -116,12 +116,16 @@ func (service *DomainService) ListVisible(ctx context.Context, user storage.User
  * - user：当前用户。
  * - domain：用户输入的域名。
  * - requestedOwnerID：管理员可指定的所有者 ID；nil 表示全局域名。
+ * - mailboxQuota：域名累计邮箱账号数上限；0 表示不限额。
  * 返回值：已创建域名。
- * 失败条件：域名非法或数据库插入失败时返回错误。
+ * 失败条件：域名非法、额度为负数或数据库插入失败时返回错误。
  */
-func (service *DomainService) CreateDomain(ctx context.Context, user storage.User, domain string, requestedOwnerID *uint) (storage.AcceptedDomain, error) {
+func (service *DomainService) CreateDomain(ctx context.Context, user storage.User, domain string, requestedOwnerID *uint, mailboxQuota int) (storage.AcceptedDomain, error) {
 	normalized, ok := NormalizeDomainInput(domain)
 	if !ok {
+		return storage.AcceptedDomain{}, ErrInvalidDomain
+	}
+	if mailboxQuota < 0 {
 		return storage.AcceptedDomain{}, ErrInvalidDomain
 	}
 
@@ -130,7 +134,7 @@ func (service *DomainService) CreateDomain(ctx context.Context, user storage.Use
 		ownerID = requestedOwnerID
 	}
 
-	return service.domains.Create(ctx, storage.AcceptedDomain{Domain: normalized, OwnerUserID: ownerID})
+	return service.domains.Create(ctx, storage.AcceptedDomain{Domain: normalized, OwnerUserID: ownerID, MailboxQuota: mailboxQuota})
 }
 
 /**
@@ -141,13 +145,17 @@ func (service *DomainService) CreateDomain(ctx context.Context, user storage.Use
  * - user：当前用户。
  * - domain：用户输入的域名。
  * - requestedOwnerID：管理员可指定的所有者 ID；nil 表示全局域名。
+ * - mailboxQuota：域名累计邮箱账号数上限；0 表示不限额。
  * - verification：用户提交的 TXT 记录名和值。
  * 返回值：已创建域名。
- * 失败条件：域名非法、TXT 验证失败或数据库插入失败时返回错误。
+ * 失败条件：域名非法、额度为负数、TXT 验证失败或数据库插入失败时返回错误。
  */
-func (service *DomainService) CreateDomainWithVerification(ctx context.Context, user storage.User, domain string, requestedOwnerID *uint, verification DomainVerificationInput) (storage.AcceptedDomain, error) {
+func (service *DomainService) CreateDomainWithVerification(ctx context.Context, user storage.User, domain string, requestedOwnerID *uint, mailboxQuota int, verification DomainVerificationInput) (storage.AcceptedDomain, error) {
 	normalized, ok := NormalizeDomainInput(domain)
 	if !ok {
+		return storage.AcceptedDomain{}, ErrInvalidDomain
+	}
+	if mailboxQuota < 0 {
 		return storage.AcceptedDomain{}, ErrInvalidDomain
 	}
 	if err := service.VerifyDomainOwnership(ctx, user, normalized, verification); err != nil {
@@ -159,7 +167,7 @@ func (service *DomainService) CreateDomainWithVerification(ctx context.Context, 
 		ownerID = requestedOwnerID
 	}
 
-	return service.domains.Create(ctx, storage.AcceptedDomain{Domain: normalized, OwnerUserID: ownerID})
+	return service.domains.Create(ctx, storage.AcceptedDomain{Domain: normalized, OwnerUserID: ownerID, MailboxQuota: mailboxQuota})
 }
 
 /**
@@ -443,10 +451,11 @@ func normalizeVerificationRecordName(name string, domain string) (string, bool) 
  * - domain：可选新域名。
  * - requestedOwnerID：管理员可指定的所有者 ID；nil 表示全局域名。
  * - disabled：可选禁用状态；nil 表示保持现状。
+ * - mailboxQuota：可选邮箱额度；nil 表示保持现状，0 表示不限额。
  * 返回值：已更新域名。
- * 失败条件：域名不存在、权限不足、域名非法或保存失败时返回错误。
+ * 失败条件：域名不存在、权限不足、域名非法、额度为负数或保存失败时返回错误。
  */
-func (service *DomainService) UpdateDomain(ctx context.Context, user storage.User, id uint, domain string, requestedOwnerID *uint, disabled *bool) (storage.AcceptedDomain, error) {
+func (service *DomainService) UpdateDomain(ctx context.Context, user storage.User, id uint, domain string, requestedOwnerID *uint, disabled *bool, mailboxQuota *int) (storage.AcceptedDomain, error) {
 	item, err := service.domains.FindByID(ctx, id)
 	if err != nil {
 		return storage.AcceptedDomain{}, err
@@ -468,6 +477,12 @@ func (service *DomainService) UpdateDomain(ctx context.Context, user storage.Use
 	if disabled != nil {
 		// 普通用户只能禁用自己拥有的域名；全局域名仍由管理员控制。
 		item.Disabled = *disabled
+	}
+	if mailboxQuota != nil {
+		if *mailboxQuota < 0 {
+			return storage.AcceptedDomain{}, ErrInvalidDomain
+		}
+		item.MailboxQuota = *mailboxQuota
 	}
 
 	return service.domains.Save(ctx, item)

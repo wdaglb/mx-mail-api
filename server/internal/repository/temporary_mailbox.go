@@ -79,6 +79,21 @@ func (repo *TemporaryMailboxRepository) FindByAddress(ctx context.Context, addre
 }
 
 /**
+ * CountByDomain 统计指定域名下累计创建过的邮箱数量。
+ *
+ * 参数：
+ * - ctx：数据库操作上下文。
+ * - domain：已归一化的邮箱域名。
+ * 返回值：该域名下所有临时和永久邮箱记录数量，包括已过期临时邮箱。
+ * 失败条件：数据库统计失败时返回错误。
+ */
+func (repo *TemporaryMailboxRepository) CountByDomain(ctx context.Context, domain string) (int64, error) {
+	var count int64
+	err := repo.db.WithContext(ctx).Model(&storage.TemporaryMailbox{}).Where("domain = ?", domain).Count(&count).Error
+	return count, err
+}
+
+/**
  * Save 保存临时邮箱完整模型。
  *
  * 参数：

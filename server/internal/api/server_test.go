@@ -486,6 +486,87 @@ func TestDisabledDomainCannotLeaseOrReceive(t *testing.T) {
 }
 
 /**
+ * TestDomainMailboxQuotaLimitsAllCreatedMailboxes 校验域名邮箱额度统计全部已创建邮箱。
+ *
+ * 参数：Go 测试框架注入 t。
+ * 返回值：无。
+ * 失败条件：额度未保存、已过期邮箱未计入额度，或重复申请同地址错误消耗额度时测试失败。
+ */
+func TestDomainMailboxQuotaLimitsAllCreatedMailboxes(t *testing.T) {
+	router, db := newTestRouter(t)
+
+	adminToken := loginAndToken(t, router, "admin", "admin123456")
+	userID := createUser(t, router, adminToken, "quota-user", "password123", storage.RoleUser)
+	userToken := loginAndToken(t, router, "quota-user", "password123")
+	if err := db.Create(&storage.AcceptedDomain{Domain: "quota.test", OwnerUserID: uintPtr(userID), MailboxQuota: 1}).Error; err != nil {
+		t.Fatalf("failed to seed quota domain: %v", err)
+	}
+
+	resp := performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "quota.test",
+		LocalPart: "first",
+	})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected first quota mailbox status 201, got %d body %s", resp.Code, resp.Body.String())
+	}
+
+	var first struct {
+		Item temporaryMailboxCreateResponse `json:"item"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &first); err != nil {
+		t.Fatalf("failed to parse first quota mailbox response: %v", err)
+	}
+	if first.Item.Domain != "quota.test" {
+		t.Fatalf("unexpected quota mailbox response: %#v", first.Item)
+	}
+
+	if err := db.Model(&storage.TemporaryMailbox{}).Where("id = ?", first.Item.ID).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatalf("failed to expire quota mailbox: %v", err)
+	}
+
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "quota.test",
+		LocalPart: "second",
+	})
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("expected quota exceeded status 409, got %d body %s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), "domain_mailbox_quota_exceeded") {
+		t.Fatalf("expected quota error code, got body %s", resp.Body.String())
+	}
+
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "quota.test",
+		LocalPart: "first",
+	})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected duplicate quota mailbox status 201, got %d body %s", resp.Code, resp.Body.String())
+	}
+
+	var quotaDomain storage.AcceptedDomain
+	if err := db.Where("domain = ?", "quota.test").First(&quotaDomain).Error; err != nil {
+		t.Fatalf("failed to load quota domain: %v", err)
+	}
+	quota := 2
+	resp = performJSON(t, router, http.MethodPut, "/api/domains/"+strconv.FormatUint(uint64(quotaDomain.ID), 10), userToken, domainRequest{
+		Domain:       "quota.test",
+		MailboxQuota: &quota,
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected update quota status 200, got %d body %s", resp.Code, resp.Body.String())
+	}
+	var updated struct {
+		Item domainResponse `json:"item"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("failed to parse updated quota domain response: %v", err)
+	}
+	if updated.Item.MailboxQuota != 2 {
+		t.Fatalf("expected updated mailbox quota 2, got %#v", updated.Item)
+	}
+}
+
+/**
  * newTestRouter 创建由内存 SQLite 支撑的隔离 API 路由。
  *
  * 参数：
@@ -792,6 +873,25 @@ func TestCreateDomainRequiresTXTVerification(t *testing.T) {
  */
 func createDomain(t *testing.T, router *gin.Engine, token string, domain string, ownerID *uint, expectedStatus int) {
 	t.Helper()
+	createDomainWithQuota(t, router, token, domain, ownerID, 0, expectedStatus)
+}
+
+/**
+ * createDomainWithQuota 创建带邮箱额度的域名并检查预期状态码。
+ *
+ * 参数：
+ * - t：测试辅助对象。
+ * - router：API 路由。
+ * - token：JWT token。
+ * - domain：域名规则。
+ * - ownerID：可选所有者 ID。
+ * - mailboxQuota：累计邮箱账号数上限；0 表示不限额。
+ * - expectedStatus：预期 HTTP 状态码。
+ * 返回值：无。
+ * 失败条件：状态码不一致时测试失败。
+ */
+func createDomainWithQuota(t *testing.T, router *gin.Engine, token string, domain string, ownerID *uint, mailboxQuota int, expectedStatus int) {
+	t.Helper()
 
 	verificationName := ""
 	verificationValue := ""
@@ -817,6 +917,7 @@ func createDomain(t *testing.T, router *gin.Engine, token string, domain string,
 		OwnerUserID:       ownerID,
 		VerificationName:  verificationName,
 		VerificationValue: verificationValue,
+		MailboxQuota:      &mailboxQuota,
 	})
 	if resp.Code != expectedStatus {
 		t.Fatalf("expected create domain status %d, got %d body %s", expectedStatus, resp.Code, resp.Body.String())

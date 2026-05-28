@@ -66,6 +66,21 @@ func (repo *DomainRepository) ListOwnedOrGlobal(ctx context.Context, userID uint
 }
 
 /**
+ * ListByDomain 返回指定域名的全部配置记录。
+ *
+ * 参数：
+ * - ctx：数据库操作上下文。
+ * - domain：已归一化的域名。
+ * 返回值：匹配该域名的域名配置记录。
+ * 失败条件：数据库查询失败时返回错误。
+ */
+func (repo *DomainRepository) ListByDomain(ctx context.Context, domain string) ([]storage.AcceptedDomain, error) {
+	var domains []storage.AcceptedDomain
+	err := repo.db.WithContext(ctx).Where("domain = ?", domain).Find(&domains).Error
+	return domains, err
+}
+
+/**
  * AcceptedPatterns 返回 SMTP 收件策略使用的全部域名规则。
  *
  * 参数：

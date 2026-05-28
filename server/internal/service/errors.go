@@ -27,6 +27,8 @@ var (
 	ErrInvalidMailboxLocalPart = errors.New("invalid mailbox local part")
 	// ErrMailboxAlreadyExists 表示用户指定的完整邮箱地址已经被申请。
 	ErrMailboxAlreadyExists = errors.New("mailbox already exists")
+	// ErrDomainMailboxQuotaExceeded 表示域名累计创建邮箱数量已经达到上限。
+	ErrDomainMailboxQuotaExceeded = errors.New("domain mailbox quota exceeded")
 	// ErrInvalidOpenAIQoS 表示 OpenAI QoS 配置不在允许范围内。
 	ErrInvalidOpenAIQoS = errors.New("invalid openai qos")
 	// ErrOpenAIQoSExceeded 表示用户已超过 OpenAI 单用户 RPM 限制。

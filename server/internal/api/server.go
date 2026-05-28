@@ -135,6 +135,7 @@ type domainRequest struct {
 	VerificationName  string `json:"verification_name"`
 	VerificationValue string `json:"verification_value"`
 	Disabled          *bool  `json:"disabled"`
+	MailboxQuota      *int   `json:"mailbox_quota"`
 }
 
 type domainVerificationRequest struct {
@@ -166,13 +167,14 @@ type apiKeyResponse struct {
 }
 
 type domainResponse struct {
-	ID          uint      `json:"id"`
-	Domain      string    `json:"domain"`
-	OwnerUserID *uint     `json:"owner_user_id"`
-	OwnerName   string    `json:"owner_name"`
-	Disabled    bool      `json:"disabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uint      `json:"id"`
+	Domain       string    `json:"domain"`
+	OwnerUserID  *uint     `json:"owner_user_id"`
+	OwnerName    string    `json:"owner_name"`
+	Disabled     bool      `json:"disabled"`
+	MailboxQuota int       `json:"mailbox_quota"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type domainVerificationResponse struct {
@@ -433,6 +435,10 @@ func (server *Server) createTemporaryMailbox(ctx *gin.Context) {
 		writeError(ctx, http.StatusConflict, "mailbox_exists", "mailbox address is already in use")
 		return
 	}
+	if errors.Is(err, service.ErrDomainMailboxQuotaExceeded) {
+		writeError(ctx, http.StatusConflict, "domain_mailbox_quota_exceeded", "domain mailbox quota has been reached")
+		return
+	}
 	if err != nil {
 		writeError(ctx, http.StatusInternalServerError, "create_failed", "failed to create temporary mailbox")
 		return
@@ -680,7 +686,7 @@ func (server *Server) createDomain(ctx *gin.Context) {
 		return
 	}
 
-	item, err := server.domains.CreateDomainWithVerification(ctx.Request.Context(), user, req.Domain, req.OwnerUserID, service.DomainVerificationInput{
+	item, err := server.domains.CreateDomainWithVerification(ctx.Request.Context(), user, req.Domain, req.OwnerUserID, normalizedMailboxQuota(req.MailboxQuota), service.DomainVerificationInput{
 		Name:  req.VerificationName,
 		Value: req.VerificationValue,
 	})
@@ -721,7 +727,7 @@ func (server *Server) updateDomain(ctx *gin.Context) {
 		return
 	}
 
-	item, err := server.domains.UpdateDomain(ctx.Request.Context(), user, id, req.Domain, req.OwnerUserID, req.Disabled)
+	item, err := server.domains.UpdateDomain(ctx.Request.Context(), user, id, req.Domain, req.OwnerUserID, req.Disabled, req.MailboxQuota)
 	if errors.Is(err, service.ErrForbidden) {
 		writeError(ctx, http.StatusForbidden, "forbidden", "cannot update another user's domain")
 		return
@@ -963,14 +969,30 @@ func toDomainResponse(domain storage.AcceptedDomain) domainResponse {
 	}
 
 	return domainResponse{
-		ID:          domain.ID,
-		Domain:      domain.Domain,
-		OwnerUserID: domain.OwnerUserID,
-		OwnerName:   ownerName,
-		Disabled:    domain.Disabled,
-		CreatedAt:   domain.CreatedAt,
-		UpdatedAt:   domain.UpdatedAt,
+		ID:           domain.ID,
+		Domain:       domain.Domain,
+		OwnerUserID:  domain.OwnerUserID,
+		OwnerName:    ownerName,
+		Disabled:     domain.Disabled,
+		MailboxQuota: domain.MailboxQuota,
+		CreatedAt:    domain.CreatedAt,
+		UpdatedAt:    domain.UpdatedAt,
 	}
+}
+
+/**
+ * normalizedMailboxQuota 将空值额度归一为不限额。
+ *
+ * 参数：
+ * - value：请求体里的可选邮箱额度。
+ * 返回值：nil 或 0 表示不限额；正数表示累计创建邮箱数量上限；负数原样保留给 service 校验。
+ * 失败条件：无。
+ */
+func normalizedMailboxQuota(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 /**

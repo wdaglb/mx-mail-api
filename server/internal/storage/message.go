@@ -98,16 +98,18 @@ type User struct {
  * - OwnerUserID：创建并拥有该域名的可选用户 ID；nil 表示全局域名，所有用户都可使用。
  * - Owner：管理 API 使用的可选 GORM 关联。
  * - Disabled：禁用后不再用于邮箱申请、SMTP 收件和收件记录可见性。
+ * - MailboxQuota：该域名累计可创建的邮箱账号数量；0 表示不限额。
  * - CreatedAt/UpdatedAt：由 GORM 管理的时间戳。
  */
 type AcceptedDomain struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Domain      string    `gorm:"size:255;uniqueIndex;not null" json:"domain"`
-	OwnerUserID *uint     `gorm:"index" json:"owner_user_id"`
-	Owner       *User     `gorm:"foreignKey:OwnerUserID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"owner"`
-	Disabled    bool      `gorm:"not null;default:false;index" json:"disabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Domain       string    `gorm:"size:255;uniqueIndex;not null" json:"domain"`
+	OwnerUserID  *uint     `gorm:"index" json:"owner_user_id"`
+	Owner        *User     `gorm:"foreignKey:OwnerUserID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"owner"`
+	Disabled     bool      `gorm:"not null;default:false;index" json:"disabled"`
+	MailboxQuota int       `gorm:"not null;default:0" json:"mailbox_quota"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 /**

@@ -92,8 +92,12 @@ func (service *TemporaryMailboxService) Create(ctx context.Context, user storage
 			}
 			localPart = generated
 		}
+		address := localPart + "@" + normalizedDomain
+		if err := service.ensureDomainMailboxQuota(ctx, normalizedDomain, address); err != nil {
+			return TemporaryMailboxResult{}, err
+		}
 		mailbox, err := service.mailboxes.Create(ctx, storage.TemporaryMailbox{
-			Address:     localPart + "@" + normalizedDomain,
+			Address:     address,
 			LocalPart:   localPart,
 			Domain:      normalizedDomain,
 			OwnerUserID: user.ID,
@@ -127,6 +131,65 @@ func (service *TemporaryMailboxService) Create(ctx context.Context, user storage
 	}
 
 	return TemporaryMailboxResult{}, ErrNoUsableDomain
+}
+
+/**
+ * ensureDomainMailboxQuota 校验域名累计邮箱创建数量是否仍有额度。
+ *
+ * 参数：
+ * - ctx：业务操作上下文。
+ * - domain：本次申请使用的已归一化域名。
+ * - address：本次将创建的完整邮箱地址。
+ * 返回值：域名未设置额度、已有同地址邮箱或累计数量未达上限时返回 nil。
+ * 失败条件：域名额度已满或数据库查询失败时返回错误。
+ */
+func (service *TemporaryMailboxService) ensureDomainMailboxQuota(ctx context.Context, domain string, address string) error {
+	existing, err := service.mailboxes.FindByAddress(ctx, strings.ToLower(strings.TrimSpace(address)))
+	if err == nil && existing.ID > 0 {
+		// 同地址重复申请走幂等逻辑，不应再次消耗域名额度。
+		return nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	domains, err := service.domains.ListByDomain(ctx, domain)
+	if err != nil {
+		return err
+	}
+	quota := effectiveMailboxQuota(domains)
+	if quota <= 0 {
+		return nil
+	}
+	count, err := service.mailboxes.CountByDomain(ctx, domain)
+	if err != nil {
+		return err
+	}
+	if count >= int64(quota) {
+		return ErrDomainMailboxQuotaExceeded
+	}
+	return nil
+}
+
+/**
+ * effectiveMailboxQuota 从同域名配置中计算实际额度。
+ *
+ * 参数：
+ * - domains：数据库中匹配同一域名的配置记录。
+ * 返回值：大于 0 的最小额度；所有记录未限额时返回 0。
+ * 失败条件：无。
+ */
+func effectiveMailboxQuota(domains []storage.AcceptedDomain) int {
+	quota := 0
+	for _, domain := range domains {
+		if domain.MailboxQuota <= 0 {
+			continue
+		}
+		if quota == 0 || domain.MailboxQuota < quota {
+			quota = domain.MailboxQuota
+		}
+	}
+	return quota
 }
 
 /**

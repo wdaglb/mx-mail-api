@@ -3,6 +3,7 @@ import {
   Card,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -114,6 +115,8 @@ export function DomainPanel({
         // 前端用 0 代表“所有人”，提交前转成 null，避免后端误解为真实用户 ID。
         owner_user_id: values.owner_user_id === 0 ? null : values.owner_user_id,
         disabled: Boolean(values.disabled),
+        // 空值按“不限制”提交，避免后端把空表单误判成非法额度。
+        mailbox_quota: values.mailbox_quota || 0,
       };
       if (editing) {
         await api.put(`/api/domains/${editing.id}`, payload);
@@ -188,6 +191,7 @@ export function DomainPanel({
       domain: '',
       owner_user_id: isAdmin ? 0 : undefined,
       disabled: false,
+      mailbox_quota: 0,
       verification_name: '',
       verification_value: '',
     });
@@ -203,6 +207,7 @@ export function DomainPanel({
       domain: row.domain,
       owner_user_id: row.owner_user_id ?? 0,
       disabled: row.disabled,
+      mailbox_quota: row.mailbox_quota || 0,
     });
     setModalOpen(true);
   };
@@ -219,6 +224,11 @@ export function DomainPanel({
       dataIndex: 'disabled',
       render: (disabled: boolean) =>
         disabled ? <Tag color="red">已禁用</Tag> : <Tag color="green">启用中</Tag>,
+    },
+    {
+      title: '邮箱额度',
+      dataIndex: 'mailbox_quota',
+      render: (value: number) => (value > 0 ? `${value} 个` : '不限'),
     },
     {
       title: '创建时间',
@@ -349,6 +359,18 @@ export function DomainPanel({
               />
             </Form.Item>
           ) : null}
+          <Form.Item
+            name="mailbox_quota"
+            label="邮箱账号数上限"
+            tooltip="统计该域名下累计创建过的所有邮箱账号，包括已过期临时邮箱。填 0 或留空表示不限额。"
+          >
+            <InputNumber
+              min={0}
+              precision={0}
+              style={{ width: '100%' }}
+              placeholder="0 表示不限额"
+            />
+          </Form.Item>
           <Form.Item
             name="disabled"
             label="是否禁用"
