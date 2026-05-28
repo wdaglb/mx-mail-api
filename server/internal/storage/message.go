@@ -41,8 +41,8 @@ type Message struct {
  *
  * 字段：
  * - ID：数据库主键。
- * - Address：完整邮箱地址，使用唯一索引避免随机前缀碰撞导致重复地址。
- * - LocalPart：随机生成的邮箱前缀。
+ * - Address：完整邮箱地址，使用唯一索引避免自动生成名称碰撞导致重复地址。
+ * - LocalPart：自动生成的邮箱名称。
  * - Domain：用户申请时选择的可用域名。
  * - OwnerUserID：申请该邮箱的用户 ID。
  * - Owner：管理 API 使用的 GORM 用户关联。

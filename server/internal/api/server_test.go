@@ -310,8 +310,8 @@ func TestTemporaryMailboxRandomDomain(t *testing.T) {
 	if strings.HasPrefix(created.Item.LocalPart, "tmp-") || strings.HasPrefix(created.Item.Address, "tmp-") {
 		t.Fatalf("expected random mailbox without tmp- prefix, got %#v", created.Item)
 	}
-	if len(created.Item.LocalPart) != 8 {
-		t.Fatalf("expected random local part length 8, got %q", created.Item.LocalPart)
+	if !isEnglishNameMailboxLocalPart(created.Item.LocalPart) {
+		t.Fatalf("expected english-name mailbox local part, got %q", created.Item.LocalPart)
 	}
 
 }
@@ -748,6 +748,34 @@ func isAlnumLabel(value string) bool {
 			continue
 		}
 		return false
+	}
+
+	return true
+}
+
+/**
+ * isEnglishNameMailboxLocalPart 检查自动邮箱名称是否符合英文名加 4 位数字的格式。
+ *
+ * 参数：
+ * - value：邮箱本地部分。
+ * 返回值：前半部分为小写英文名、后半部分为 4 位数字时返回 true。
+ * 失败条件：无。
+ */
+func isEnglishNameMailboxLocalPart(value string) bool {
+	if len(value) <= 4 {
+		return false
+	}
+	name := value[:len(value)-4]
+	suffix := value[len(value)-4:]
+	for _, char := range name {
+		if char < 'a' || char > 'z' {
+			return false
+		}
+	}
+	for _, char := range suffix {
+		if char < '0' || char > '9' {
+			return false
+		}
 	}
 
 	return true

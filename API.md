@@ -45,7 +45,7 @@ X-API-Key: <your_api_key>
 
 行为说明：
 
-- 服务端自动生成 8 位随机邮箱前缀，不包含固定业务前缀。
+- 服务端使用英文名风格自动生成邮箱名称，并追加数字后缀降低重复概率，不包含固定业务前缀。
 - 已禁用的域名不会被用于申请邮箱，也不会在未指定域名时被随机选中。
 - 永久邮箱不会过期；普通邮箱到期后不再接收邮件。
 
@@ -55,8 +55,8 @@ X-API-Key: <your_api_key>
 {
   "item": {
     "id": 1,
-    "address": "abcd1234@example.com",
-    "local_part": "abcd1234",
+    "address": "alice4821@example.com",
+    "local_part": "alice4821",
     "domain": "example.com",
     "owner_user_id": 2,
     "expires_at": "2026-05-27T12:30:00+08:00",
@@ -78,7 +78,7 @@ X-API-Key: <your_api_key>
 ## 获取临时邮箱最新邮件
 
 ```http
-GET /openapi/temporary-mailboxes/latest-message?address=abcd1234@example.com
+GET /openapi/temporary-mailboxes/latest-message?address=alice4821@example.com
 X-API-Key: <your_api_key>
 ```
 

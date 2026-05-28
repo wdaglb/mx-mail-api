@@ -3,15 +3,17 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base32"
 	"errors"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"mx-mail-api/internal/repository"
 	"mx-mail-api/internal/storage"
 
+	"github.com/go-faker/faker/v4"
 	"gorm.io/gorm"
 )
 
@@ -52,7 +54,7 @@ func NewTemporaryMailboxService(mailboxes *repository.TemporaryMailboxRepository
  * - ttlMinutes：请求体中的租赁分钟数；nil 表示兼容旧客户端，使用用户配置的第一个可选值。
  * - permanent：是否申请永久邮箱；需要用户具备永久邮箱申请权限。
  * 返回值：已创建临时邮箱和本次租赁分钟数。
- * 失败条件：域名不可用、租赁时间不在用户允许范围、随机前缀生成失败，或数据库插入失败时返回错误。
+ * 失败条件：域名不可用、租赁时间不在用户允许范围、邮箱名称生成失败，或数据库插入失败时返回错误。
  */
 func (service *TemporaryMailboxService) Create(ctx context.Context, user storage.User, domain string, ttlMinutes *int, permanent bool) (TemporaryMailboxResult, error) {
 	normalizedDomain, err := service.resolveDomainForUser(ctx, user.ID, domain)
@@ -232,19 +234,56 @@ func randomIndex(length int) (int, error) {
 }
 
 /**
- * randomMailboxLocalPart 生成临时邮箱随机本地部分。
+ * randomMailboxLocalPart 生成临时邮箱本地部分。
  *
  * 参数：无。
- * 返回值：8 位小写 base32 字符串。
+ * 返回值：faker 生成的英文名加 4 位数字后缀，例如 alice4821。
  * 失败条件：系统安全随机数生成失败时返回错误。
  */
 func randomMailboxLocalPart() (string, error) {
-	bytes := make([]byte, 5)
-	if _, err := rand.Read(bytes); err != nil {
+	suffix, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
 		return "", err
 	}
 
-	encoded := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(bytes)
-	// 5 字节经无填充 base32 编码后正好是 8 位，满足短地址需求；唯一性由安全随机数和数据库唯一约束兜底。
-	return strings.ToLower(encoded), nil
+	// faker 生成的姓名更接近真实邮箱命名习惯；仍清洗为小写字母，避免邮箱本地部分出现空格或标点。
+	return normalizeMailboxName(faker.FirstName()) + formatMailboxNameSuffix(suffix.Int64()), nil
+}
+
+/**
+ * formatMailboxNameSuffix 将 0 到 9999 的随机数格式化为固定 4 位。
+ *
+ * 参数：
+ * - value：随机数字。
+ * 返回值：补齐前导 0 的 4 位数字字符串。
+ * 失败条件：无。
+ */
+func formatMailboxNameSuffix(value int64) string {
+	text := "0000" + strconv.FormatInt(value, 10)
+	return text[len(text)-4:]
+}
+
+/**
+ * normalizeMailboxName 清洗 faker 生成的英文名。
+ *
+ * 参数：
+ * - value：faker 返回的人名。
+ * 返回值：仅包含小写英文字母的名称；清洗为空时返回默认名称。
+ * 失败条件：无。
+ */
+func normalizeMailboxName(value string) string {
+	var builder strings.Builder
+	for _, char := range strings.ToLower(value) {
+		if char >= 'a' && char <= 'z' {
+			builder.WriteRune(char)
+		} else if unicode.IsLetter(char) {
+			// 非 ASCII 字母不适合作为对外邮箱名称，避免不同邮件系统处理不一致。
+			continue
+		}
+	}
+	if builder.Len() == 0 {
+		return "user"
+	}
+
+	return builder.String()
 }
