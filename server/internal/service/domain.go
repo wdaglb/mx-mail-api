@@ -215,10 +215,15 @@ func (service *DomainService) VerifyDomainOwnership(ctx context.Context, user st
 	}
 
 	lookup := service.lookupTXT
+	var records []string
+	var err error
 	if lookup == nil {
-		lookup = lookupTXTWithFallback
+		// TXT 记录名一定落在待验证域名之下；查询 NS 时必须以待验证域名为边界，
+		// 避免子域场景被父域权威 DNS 的 NXDOMAIN 结果误导。
+		records, err = lookupTXTWithFallbackForDomain(ctx, name, domain)
+	} else {
+		records, err = lookup(ctx, name)
 	}
-	records, err := lookup(ctx, name)
 	if err != nil {
 		return ErrDomainVerification
 	}
@@ -232,45 +237,60 @@ func (service *DomainService) VerifyDomainOwnership(ctx context.Context, user st
 }
 
 /**
- * lookupTXTWithFallback 查询 TXT 记录，并在系统 DNS 不可用时回退到域名所属 DNS 和公共 DNS。
+ * lookupTXTWithFallback 查询 TXT 记录，并在系统 DNS 不可用时回退到记录名默认父域 DNS 和公共 DNS。
  *
  * 参数：
  * - ctx：业务操作上下文。
  * - name：完整 TXT 记录名。
  * 返回值：DNS 返回的 TXT 记录数组。
- * 失败条件：系统 DNS、域名所属 DNS 和备用 DNS 均不可用，或记录不存在时返回最后一次查询错误。
+ * 失败条件：系统 DNS、记录名默认父域 DNS 和备用 DNS 均不可用，或记录不存在时返回最后一次查询错误。
  */
 func lookupTXTWithFallback(ctx context.Context, name string) ([]string, error) {
+	return lookupTXTWithFallbackForDomain(ctx, name, parentDomainForRecord(name))
+}
+
+/**
+ * lookupTXTWithFallbackForDomain 查询 TXT 记录，并优先使用待验证域名本身的 DNS。
+ *
+ * 参数：
+ * - ctx：业务操作上下文。
+ * - name：完整 TXT 记录名。
+ * - domain：待验证域名，子域验证时必须保持为用户提交的子域。
+ * 返回值：DNS 返回的 TXT 记录数组。
+ * 失败条件：系统 DNS、待验证域名 DNS 和备用 DNS 均不可用，或记录不存在时返回最后一次查询错误。
+ */
+func lookupTXTWithFallbackForDomain(ctx context.Context, name string, domain string) ([]string, error) {
 	publicFallbacks := make([]txtLookupFunc, 0, len(fallbackDNSServers))
 	for _, server := range fallbackDNSServers {
 		resolver := publicDNSResolver(server)
 		publicFallbacks = append(publicFallbacks, resolver.LookupTXT)
 	}
 
-	return lookupTXTWithResolvers(ctx, name, net.DefaultResolver.LookupTXT, net.DefaultResolver.LookupNS, resolverTXTLookup, publicFallbacks)
+	return lookupTXTWithResolvers(ctx, name, domain, net.DefaultResolver.LookupTXT, net.DefaultResolver.LookupNS, resolverTXTLookup, publicFallbacks)
 }
 
 /**
- * lookupTXTWithResolvers 按系统 DNS、域名所属 DNS、备用 DNS 的顺序查询 TXT 记录。
+ * lookupTXTWithResolvers 按系统 DNS、待验证域名 DNS、备用 DNS 的顺序查询 TXT 记录。
  *
  * 参数：
  * - ctx：业务操作上下文。
  * - name：完整 TXT 记录名。
+ * - domain：待验证域名，用于限定 NS 查询边界。
  * - systemLookup：系统默认 TXT 查询函数。
- * - lookupNS：NS 查询函数，用于发现域名所属 DNS。
+ * - lookupNS：NS 查询函数，用于发现待验证域名配置的 DNS。
  * - serverLookup：基于 DNS 服务器地址创建 TXT 查询函数。
  * - fallbackLookups：备用 DNS 查询函数列表，按优先级顺序执行。
  * 返回值：首个成功解析器返回的 TXT 记录数组。
  * 失败条件：全部解析器均失败时返回最后一次错误。
  */
-func lookupTXTWithResolvers(ctx context.Context, name string, systemLookup txtLookupFunc, lookupNS nsLookupFunc, serverLookup dnsServerLookupFactory, fallbackLookups []txtLookupFunc) ([]string, error) {
+func lookupTXTWithResolvers(ctx context.Context, name string, domain string, systemLookup txtLookupFunc, lookupNS nsLookupFunc, serverLookup dnsServerLookupFactory, fallbackLookups []txtLookupFunc) ([]string, error) {
 	records, err := systemLookup(ctx, name)
 	if len(records) > 0 || err == nil {
 		return records, err
 	}
 
 	lastErr := err
-	nameservers, nsErr := discoverNameServers(ctx, name, lookupNS)
+	nameservers, nsErr := discoverNameServers(ctx, domain, lookupNS)
 	if nsErr == nil {
 		for _, server := range nameservers {
 			records, err = serverLookup(server)(ctx, name)
@@ -307,47 +327,57 @@ func resolverTXTLookup(server string) txtLookupFunc {
 }
 
 /**
- * discoverNameServers 从完整记录名逐级查找可用 NS 服务器。
+ * discoverNameServers 查找待验证域名自身配置的 NS 服务器。
  *
  * 参数：
  * - ctx：业务操作上下文。
- * - name：完整 TXT 记录名。
+ * - domain：待验证域名；子域验证时不能向父域继续放宽。
  * - lookupNS：NS 查询函数。
  * 返回值：带 53 端口的 DNS 服务器地址列表。
- * 失败条件：所有父级域名都没有返回 NS 时返回最后一次查询错误。
+ * 失败条件：待验证域名没有返回 NS 时返回查询错误或 no nameserver found。
  */
-func discoverNameServers(ctx context.Context, name string, lookupNS nsLookupFunc) ([]string, error) {
-	labels := strings.Split(strings.TrimSuffix(storage.NormalizeDomain(name), "."), ".")
-	if len(labels) < 2 {
+func discoverNameServers(ctx context.Context, domain string, lookupNS nsLookupFunc) ([]string, error) {
+	candidate := strings.TrimSuffix(storage.NormalizeDomain(domain), ".")
+	if len(strings.Split(candidate, ".")) < 2 {
 		return nil, errors.New("dns name is too short")
 	}
 
-	var lastErr error
-	for index := 0; index < len(labels)-1; index++ {
-		candidate := strings.Join(labels[index:], ".")
-		records, err := lookupNS(ctx, candidate)
-		if err != nil {
-			lastErr = err
+	records, err := lookupNS(ctx, candidate)
+	if err != nil {
+		return nil, err
+	}
+
+	servers := make([]string, 0, len(records))
+	for _, record := range records {
+		host := strings.TrimSuffix(storage.NormalizeDomain(record.Host), ".")
+		if host == "" {
 			continue
 		}
-
-		servers := make([]string, 0, len(records))
-		for _, record := range records {
-			host := strings.TrimSuffix(storage.NormalizeDomain(record.Host), ".")
-			if host == "" {
-				continue
-			}
-			servers = append(servers, net.JoinHostPort(host, "53"))
-		}
-		if len(servers) > 0 {
-			return servers, nil
-		}
+		servers = append(servers, net.JoinHostPort(host, "53"))
+	}
+	if len(servers) > 0 {
+		return servers, nil
 	}
 
-	if lastErr != nil {
-		return nil, lastErr
-	}
 	return nil, errors.New("no nameserver found")
+}
+
+/**
+ * parentDomainForRecord 从完整 TXT 记录名中提取默认待验证域名。
+ *
+ * 参数：
+ * - name：完整 TXT 记录名。
+ * 返回值：去掉最左侧随机记录名前缀后的域名；无法提取时返回原始归一化名称。
+ * 失败条件：无。
+ */
+func parentDomainForRecord(name string) string {
+	normalized := strings.TrimSuffix(storage.NormalizeDomain(name), ".")
+	parts := strings.Split(normalized, ".")
+	if len(parts) <= 2 {
+		return normalized
+	}
+
+	return strings.Join(parts[1:], ".")
 }
 
 /**
