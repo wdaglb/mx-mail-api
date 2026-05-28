@@ -23,6 +23,10 @@ var (
 	ErrTemporaryMailboxExpired = errors.New("temporary mailbox expired")
 	// ErrInvalidTemporaryMailboxTTL 表示临时邮箱租赁分钟数为空、越界或不在用户允许范围内。
 	ErrInvalidTemporaryMailboxTTL = errors.New("invalid temporary mailbox ttl")
+	// ErrInvalidMailboxLocalPart 表示用户指定的邮箱名称为空、过长或包含不支持的字符。
+	ErrInvalidMailboxLocalPart = errors.New("invalid mailbox local part")
+	// ErrMailboxAlreadyExists 表示用户指定的完整邮箱地址已经被申请。
+	ErrMailboxAlreadyExists = errors.New("mailbox already exists")
 	// ErrInvalidOpenAIQoS 表示 OpenAI QoS 配置不在允许范围内。
 	ErrInvalidOpenAIQoS = errors.New("invalid openai qos")
 	// ErrOpenAIQoSExceeded 表示用户已超过 OpenAI 单用户 RPM 限制。

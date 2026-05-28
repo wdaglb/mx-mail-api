@@ -317,6 +317,56 @@ func TestTemporaryMailboxRandomDomain(t *testing.T) {
 }
 
 /**
+ * TestTemporaryMailboxUsesRequestedLocalPart 校验用户可以指定临时或永久邮箱名称。
+ *
+ * 参数：Go 测试框架注入 t。
+ * 返回值：无。
+ * 失败条件：指定邮箱名称未生效、非法名称被接受，或重复邮箱没有返回冲突时测试失败。
+ */
+func TestTemporaryMailboxUsesRequestedLocalPart(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	adminToken := loginAndToken(t, router, "admin", "admin123456")
+	userID := createUser(t, router, adminToken, "alice", "password123", storage.RoleUser)
+	userToken := loginAndToken(t, router, "alice", "password123")
+	createDomain(t, router, userToken, "custom.test", uintPtr(userID), http.StatusCreated)
+
+	resp := performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "custom.test",
+		LocalPart: "My.Name_01",
+	})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected requested local part status 201, got %d body %s", resp.Code, resp.Body.String())
+	}
+
+	var created struct {
+		Item temporaryMailboxCreateResponse `json:"item"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("failed to parse requested local part response: %v", err)
+	}
+	if created.Item.LocalPart != "my.name_01" || created.Item.Address != "my.name_01@custom.test" || created.Item.IsPermanent {
+		t.Fatalf("unexpected requested local part mailbox: %#v", created.Item)
+	}
+
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "custom.test",
+		LocalPart: "bad name",
+	})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid local part status 400, got %d body %s", resp.Code, resp.Body.String())
+	}
+
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "custom.test",
+		LocalPart: "my.name_01",
+	})
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate local part status 409, got %d body %s", resp.Code, resp.Body.String())
+	}
+}
+
+/**
  * TestDisabledDomainCannotLeaseOrReceive 校验禁用域名不再用于邮箱申请和 SMTP 收件。
  *
  * 参数：Go 测试框架注入 t。

@@ -75,6 +75,7 @@ export type UserFormValues = {
 
 export type TemporaryMailboxFormValues = {
   domain: string;
+  local_part?: string;
   ttl_minutes?: number;
 };
 

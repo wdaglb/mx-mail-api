@@ -14,6 +14,7 @@ import (
 	"mx-mail-api/internal/storage"
 
 	"github.com/go-faker/faker/v4"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -51,15 +52,20 @@ func NewTemporaryMailboxService(mailboxes *repository.TemporaryMailboxRepository
  * - ctx：业务操作上下文。
  * - user：当前用户。
  * - domain：用户选择的可用域名；为空时从用户可用域名中随机选择。
+ * - requestedLocalPart：用户指定的邮箱名称；为空时自动生成。
  * - ttlMinutes：请求体中的租赁分钟数；nil 表示兼容旧客户端，使用用户配置的第一个可选值。
  * - permanent：是否申请永久邮箱；需要用户具备永久邮箱申请权限。
  * 返回值：已创建临时邮箱和本次租赁分钟数。
  * 失败条件：域名不可用、租赁时间不在用户允许范围、邮箱名称生成失败，或数据库插入失败时返回错误。
  */
-func (service *TemporaryMailboxService) Create(ctx context.Context, user storage.User, domain string, ttlMinutes *int, permanent bool) (TemporaryMailboxResult, error) {
+func (service *TemporaryMailboxService) Create(ctx context.Context, user storage.User, domain string, requestedLocalPart string, ttlMinutes *int, permanent bool) (TemporaryMailboxResult, error) {
 	normalizedDomain, err := service.resolveDomainForUser(ctx, user.ID, domain)
 	if err != nil {
 		return TemporaryMailboxResult{}, err
+	}
+	normalizedLocalPart, localPartSpecified := normalizeRequestedMailboxLocalPart(requestedLocalPart)
+	if strings.TrimSpace(requestedLocalPart) != "" && !localPartSpecified {
+		return TemporaryMailboxResult{}, ErrInvalidMailboxLocalPart
 	}
 
 	resolvedTTLMinutes := 0
@@ -78,9 +84,13 @@ func (service *TemporaryMailboxService) Create(ctx context.Context, user storage
 	}
 
 	for i := 0; i < 5; i++ {
-		localPart, err := randomMailboxLocalPart()
-		if err != nil {
-			return TemporaryMailboxResult{}, err
+		localPart := normalizedLocalPart
+		if !localPartSpecified {
+			generated, err := randomMailboxLocalPart()
+			if err != nil {
+				return TemporaryMailboxResult{}, err
+			}
+			localPart = generated
 		}
 		mailbox, err := service.mailboxes.Create(ctx, storage.TemporaryMailbox{
 			Address:     localPart + "@" + normalizedDomain,
@@ -95,6 +105,9 @@ func (service *TemporaryMailboxService) Create(ctx context.Context, user storage
 				Mailbox:    mailbox,
 				TTLMinutes: resolvedTTLMinutes,
 			}, nil
+		}
+		if localPartSpecified || isUniqueConstraintError(err) {
+			return TemporaryMailboxResult{}, ErrMailboxAlreadyExists
 		}
 	}
 
@@ -264,6 +277,45 @@ func formatMailboxNameSuffix(value int64) string {
 }
 
 /**
+ * normalizeRequestedMailboxLocalPart 归一化用户指定的邮箱名称。
+ *
+ * 参数：
+ * - value：用户填写的邮箱名称，不包含 @ 和域名。
+ * 返回值：归一化后的邮箱名称，以及是否有效。
+ * 失败条件：无；非法输入通过 false 表达。
+ */
+func normalizeRequestedMailboxLocalPart(value string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if len(normalized) < 3 || len(normalized) > 64 {
+		return "", false
+	}
+	if strings.HasPrefix(normalized, ".") || strings.HasSuffix(normalized, ".") {
+		return "", false
+	}
+
+	lastDot := false
+	for _, char := range normalized {
+		switch {
+		case char >= 'a' && char <= 'z':
+			lastDot = false
+		case char >= '0' && char <= '9':
+			lastDot = false
+		case char == '_' || char == '-':
+			lastDot = false
+		case char == '.':
+			if lastDot {
+				return "", false
+			}
+			lastDot = true
+		default:
+			return "", false
+		}
+	}
+
+	return normalized, true
+}
+
+/**
  * normalizeMailboxName 清洗 faker 生成的英文名。
  *
  * 参数：
@@ -286,4 +338,17 @@ func normalizeMailboxName(value string) string {
 	}
 
 	return builder.String()
+}
+
+/**
+ * isUniqueConstraintError 判断数据库错误是否为唯一约束冲突。
+ *
+ * 参数：
+ * - err：数据库返回的错误。
+ * 返回值：Postgres 唯一约束冲突时返回 true。
+ * 失败条件：无。
+ */
+func isUniqueConstraintError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

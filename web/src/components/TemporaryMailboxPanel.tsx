@@ -121,6 +121,7 @@ export function TemporaryMailboxPanel({
         '/api/temporary-mailboxes',
         {
           domain: values.domain,
+          local_part: values.local_part?.trim() || undefined,
           permanent,
           ttl_minutes: permanent ? undefined : values.ttl_minutes,
         },
@@ -222,7 +223,7 @@ export function TemporaryMailboxPanel({
       }
     >
       <Typography.Paragraph>
-        系统会自动生成邮箱名称；未选择域名时，会自动选择一个可用域名。临时邮箱到期后不再接收邮件；永久邮箱不会过期，需管理员为你开启权限。
+        可以自己填写邮箱名称；不填写时系统会自动生成。未选择域名时，会自动选择一个可用域名。临时邮箱到期后不再接收邮件；永久邮箱不会过期，需管理员为你开启权限。
       </Typography.Paragraph>
       <Form
         form={form}
@@ -241,6 +242,18 @@ export function TemporaryMailboxPanel({
               value: domain.domain,
             }))}
           />
+        </Form.Item>
+        <Form.Item
+          name="local_part"
+          label="邮箱名称"
+          rules={[
+            {
+              pattern: /^[a-zA-Z0-9](?!.*\.\.)[a-zA-Z0-9._-]{1,62}[a-zA-Z0-9]$/,
+              message: '请输入 3-64 位字母、数字、点、下划线或短横线',
+            },
+          ]}
+        >
+          <Input placeholder="不填则自动生成" style={{ width: 180 }} />
         </Form.Item>
         <Form.Item
           name="ttl_minutes"

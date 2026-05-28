@@ -143,6 +143,7 @@ type domainVerificationRequest struct {
 
 type temporaryMailboxRequest struct {
 	Domain     string `json:"domain"`
+	LocalPart  string `json:"local_part"`
 	TTLMinutes *int   `json:"ttl_minutes"`
 	Permanent  bool   `json:"permanent"`
 }
@@ -411,7 +412,7 @@ func (server *Server) createTemporaryMailbox(ctx *gin.Context) {
 		return
 	}
 
-	result, err := server.temporary.Create(ctx.Request.Context(), user, req.Domain, req.TTLMinutes, req.Permanent)
+	result, err := server.temporary.Create(ctx.Request.Context(), user, req.Domain, req.LocalPart, req.TTLMinutes, req.Permanent)
 	if errors.Is(err, service.ErrForbidden) {
 		writeError(ctx, http.StatusForbidden, "forbidden", "current user cannot lease permanent mailbox")
 		return
@@ -422,6 +423,14 @@ func (server *Server) createTemporaryMailbox(ctx *gin.Context) {
 	}
 	if errors.Is(err, service.ErrInvalidTemporaryMailboxTTL) {
 		writeError(ctx, http.StatusBadRequest, "invalid_ttl", "ttl_minutes is not allowed for current user")
+		return
+	}
+	if errors.Is(err, service.ErrInvalidMailboxLocalPart) {
+		writeError(ctx, http.StatusBadRequest, "invalid_local_part", "mailbox name must be 3-64 characters and may contain letters, numbers, dots, underscores or hyphens")
+		return
+	}
+	if errors.Is(err, service.ErrMailboxAlreadyExists) {
+		writeError(ctx, http.StatusConflict, "mailbox_exists", "mailbox address is already in use")
 		return
 	}
 	if err != nil {
