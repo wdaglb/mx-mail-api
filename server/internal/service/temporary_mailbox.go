@@ -55,8 +55,8 @@ func NewTemporaryMailboxService(mailboxes *repository.TemporaryMailboxRepository
  * - requestedLocalPart：用户指定的邮箱名称；为空时自动生成。
  * - ttlMinutes：请求体中的租赁分钟数；nil 表示兼容旧客户端，使用用户配置的第一个可选值。
  * - permanent：是否申请永久邮箱；需要用户具备永久邮箱申请权限。
- * 返回值：已创建临时邮箱和本次租赁分钟数。
- * 失败条件：域名不可用、租赁时间不在用户允许范围、邮箱名称生成失败，或数据库插入失败时返回错误。
+ * 返回值：已创建临时邮箱和本次租赁分钟数；指定邮箱已属于当前用户时幂等返回该邮箱。
+ * 失败条件：域名不可用、租赁时间不在用户允许范围、邮箱名称生成失败，或其他用户已占用该邮箱时返回错误。
  */
 func (service *TemporaryMailboxService) Create(ctx context.Context, user storage.User, domain string, requestedLocalPart string, ttlMinutes *int, permanent bool) (TemporaryMailboxResult, error) {
 	normalizedDomain, err := service.resolveDomainForUser(ctx, user.ID, domain)
@@ -106,12 +106,69 @@ func (service *TemporaryMailboxService) Create(ctx context.Context, user storage
 				TTLMinutes: resolvedTTLMinutes,
 			}, nil
 		}
-		if localPartSpecified || isUniqueConstraintError(err) {
-			return TemporaryMailboxResult{}, ErrMailboxAlreadyExists
+		if localPartSpecified && isUniqueConstraintError(err) {
+			return service.resolveExistingMailboxForCreate(ctx, user, localPart+"@"+normalizedDomain, expiresAt, permanent, resolvedTTLMinutes)
 		}
+		if localPartSpecified {
+			existing, resolveErr := service.resolveExistingMailboxForCreate(ctx, user, localPart+"@"+normalizedDomain, expiresAt, permanent, resolvedTTLMinutes)
+			if resolveErr == nil {
+				return existing, nil
+			}
+			if errors.Is(resolveErr, gorm.ErrRecordNotFound) {
+				return TemporaryMailboxResult{}, err
+			}
+			return TemporaryMailboxResult{}, resolveErr
+		}
+		if isUniqueConstraintError(err) {
+			// 自动生成名称理论上仍可能碰撞；继续重试可以避免把低概率随机冲突暴露给用户。
+			continue
+		}
+		return TemporaryMailboxResult{}, err
 	}
 
 	return TemporaryMailboxResult{}, ErrNoUsableDomain
+}
+
+/**
+ * resolveExistingMailboxForCreate 处理指定邮箱地址已经存在时的幂等创建语义。
+ *
+ * 参数：
+ * - ctx：业务操作上下文。
+ * - user：当前用户。
+ * - address：本次申请的完整邮箱地址。
+ * - expiresAt：按本次请求计算出的新过期时间。
+ * - permanent：本次是否申请永久邮箱。
+ * - ttlMinutes：本次解析得到的租赁分钟数；永久邮箱为 0。
+ * 返回值：当前用户已拥有该地址时返回现有或刷新后的邮箱。
+ * 失败条件：地址属于其他用户、记录读取失败或刷新过期时间失败时返回错误。
+ */
+func (service *TemporaryMailboxService) resolveExistingMailboxForCreate(ctx context.Context, user storage.User, address string, expiresAt time.Time, permanent bool, ttlMinutes int) (TemporaryMailboxResult, error) {
+	mailbox, err := service.mailboxes.FindByAddress(ctx, strings.ToLower(strings.TrimSpace(address)))
+	if err != nil {
+		return TemporaryMailboxResult{}, err
+	}
+	if mailbox.OwnerUserID != user.ID {
+		return TemporaryMailboxResult{}, ErrMailboxAlreadyExists
+	}
+
+	// Note: 重新 OAuth 复用旧邮箱时，幂等成功还必须保证后续能收验证码；
+	// 因此非永久邮箱按本次租期刷新过期时间，永久邮箱保持原有永久语义不回退。
+	if !mailbox.IsPermanent {
+		mailbox.ExpiresAt = expiresAt
+		if permanent {
+			mailbox.ExpiresAt = permanentMailboxExpiresAt
+			mailbox.IsPermanent = true
+		}
+		mailbox, err = service.mailboxes.Save(ctx, mailbox)
+		if err != nil {
+			return TemporaryMailboxResult{}, err
+		}
+	}
+
+	return TemporaryMailboxResult{
+		Mailbox:    mailbox,
+		TTLMinutes: ttlMinutes,
+	}, nil
 }
 
 /**

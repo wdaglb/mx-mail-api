@@ -77,3 +77,17 @@ func (repo *TemporaryMailboxRepository) FindByAddress(ctx context.Context, addre
 	err := repo.db.WithContext(ctx).Where("address = ?", address).First(&mailbox).Error
 	return mailbox, err
 }
+
+/**
+ * Save 保存临时邮箱完整模型。
+ *
+ * 参数：
+ * - ctx：数据库操作上下文。
+ * - mailbox：待保存临时邮箱。
+ * 返回值：已保存临时邮箱。
+ * 失败条件：邮箱不存在、唯一约束冲突或数据库拒绝更新时返回错误。
+ */
+func (repo *TemporaryMailboxRepository) Save(ctx context.Context, mailbox storage.TemporaryMailbox) (storage.TemporaryMailbox, error) {
+	err := repo.db.WithContext(ctx).Save(&mailbox).Error
+	return mailbox, err
+}

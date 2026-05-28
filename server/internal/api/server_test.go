@@ -321,10 +321,10 @@ func TestTemporaryMailboxRandomDomain(t *testing.T) {
  *
  * 参数：Go 测试框架注入 t。
  * 返回值：无。
- * 失败条件：指定邮箱名称未生效、非法名称被接受，或重复邮箱没有返回冲突时测试失败。
+ * 失败条件：指定邮箱名称未生效、非法名称被接受，或同账户重复申请没有幂等刷新时测试失败。
  */
 func TestTemporaryMailboxUsesRequestedLocalPart(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, db := newTestRouter(t)
 
 	adminToken := loginAndToken(t, router, "admin", "admin123456")
 	userID := createUser(t, router, adminToken, "alice", "password123", storage.RoleUser)
@@ -361,8 +361,68 @@ func TestTemporaryMailboxUsesRequestedLocalPart(t *testing.T) {
 		Domain:    "custom.test",
 		LocalPart: "my.name_01",
 	})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected owned duplicate local part status 201, got %d body %s", resp.Code, resp.Body.String())
+	}
+	var refreshed struct {
+		Item temporaryMailboxCreateResponse `json:"item"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &refreshed); err != nil {
+		t.Fatalf("failed to parse refreshed duplicate response: %v", err)
+	}
+	if refreshed.Item.ID != created.Item.ID || refreshed.Item.Address != created.Item.Address || refreshed.Item.Expired {
+		t.Fatalf("unexpected refreshed duplicate mailbox: %#v", refreshed.Item)
+	}
+	if !refreshed.Item.ExpiresAt.After(created.Item.ExpiresAt) {
+		t.Fatalf("expected duplicate request to refresh expires_at from %s to a later value, got %s", created.Item.ExpiresAt, refreshed.Item.ExpiresAt)
+	}
+
+	allowPermanent := true
+	resp = performJSON(t, router, http.MethodPut, "/api/users/"+strconv.FormatUint(uint64(userID), 10), adminToken, userRequest{
+		CanLeasePermanentMailbox: &allowPermanent,
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected allow permanent mailbox status 200, got %d body %s", resp.Code, resp.Body.String())
+	}
+	userToken = loginAndToken(t, router, "alice", "password123")
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain:    "custom.test",
+		LocalPart: "my.name_01",
+		Permanent: true,
+	})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected owned duplicate permanent upgrade status 201, got %d body %s", resp.Code, resp.Body.String())
+	}
+	var permanent struct {
+		Item temporaryMailboxCreateResponse `json:"item"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &permanent); err != nil {
+		t.Fatalf("failed to parse permanent duplicate response: %v", err)
+	}
+	if !permanent.Item.IsPermanent || permanent.Item.ID != created.Item.ID {
+		t.Fatalf("expected duplicate permanent request to upgrade existing mailbox, got %#v", permanent.Item)
+	}
+
+	otherID := createUser(t, router, adminToken, "bob", "password123", storage.RoleUser)
+	otherToken := loginAndToken(t, router, "bob", "password123")
+	if err := db.Create(&storage.AcceptedDomain{Domain: "other.test", OwnerUserID: uintPtr(otherID)}).Error; err != nil {
+		t.Fatalf("failed to seed other domain: %v", err)
+	}
+	if err := db.Create(&storage.TemporaryMailbox{
+		Address:     "owned-by-bob@other.test",
+		LocalPart:   "owned-by-bob",
+		Domain:      "other.test",
+		OwnerUserID: userID,
+		ExpiresAt:   time.Now().Add(30 * time.Minute),
+	}).Error; err != nil {
+		t.Fatalf("failed to seed other mailbox: %v", err)
+	}
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", otherToken, temporaryMailboxRequest{
+		Domain:    "other.test",
+		LocalPart: "owned-by-bob",
+	})
 	if resp.Code != http.StatusConflict {
-		t.Fatalf("expected duplicate local part status 409, got %d body %s", resp.Code, resp.Body.String())
+		t.Fatalf("expected other owner duplicate status 409, got %d body %s", resp.Code, resp.Body.String())
 	}
 }
 
