@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"net"
 	"strconv"
@@ -30,6 +31,8 @@ type DomainService struct {
 
 type domainLookupTXT func(ctx context.Context, name string) ([]string, error)
 type txtLookupFunc func(ctx context.Context, name string) ([]string, error)
+type nsLookupFunc func(ctx context.Context, name string) ([]*net.NS, error)
+type dnsServerLookupFactory func(server string) txtLookupFunc
 
 const (
 	domainVerificationLabelLength = 12
@@ -229,42 +232,57 @@ func (service *DomainService) VerifyDomainOwnership(ctx context.Context, user st
 }
 
 /**
- * lookupTXTWithFallback 查询 TXT 记录，并在系统 DNS 不可用时回退到公共 DNS。
+ * lookupTXTWithFallback 查询 TXT 记录，并在系统 DNS 不可用时回退到域名所属 DNS 和公共 DNS。
  *
  * 参数：
  * - ctx：业务操作上下文。
  * - name：完整 TXT 记录名。
  * 返回值：DNS 返回的 TXT 记录数组。
- * 失败条件：系统 DNS 和备用 DNS 均不可用，或记录不存在时返回最后一次查询错误。
+ * 失败条件：系统 DNS、域名所属 DNS 和备用 DNS 均不可用，或记录不存在时返回最后一次查询错误。
  */
 func lookupTXTWithFallback(ctx context.Context, name string) ([]string, error) {
-	fallbacks := make([]txtLookupFunc, 0, len(fallbackDNSServers))
+	publicFallbacks := make([]txtLookupFunc, 0, len(fallbackDNSServers))
 	for _, server := range fallbackDNSServers {
 		resolver := publicDNSResolver(server)
-		fallbacks = append(fallbacks, resolver.LookupTXT)
+		publicFallbacks = append(publicFallbacks, resolver.LookupTXT)
 	}
 
-	return lookupTXTWithResolvers(ctx, name, net.DefaultResolver.LookupTXT, fallbacks)
+	return lookupTXTWithResolvers(ctx, name, net.DefaultResolver.LookupTXT, net.DefaultResolver.LookupNS, resolverTXTLookup, publicFallbacks)
 }
 
 /**
- * lookupTXTWithResolvers 按系统 DNS、备用 DNS 的顺序查询 TXT 记录。
+ * lookupTXTWithResolvers 按系统 DNS、域名所属 DNS、备用 DNS 的顺序查询 TXT 记录。
  *
  * 参数：
  * - ctx：业务操作上下文。
  * - name：完整 TXT 记录名。
  * - systemLookup：系统默认 TXT 查询函数。
+ * - lookupNS：NS 查询函数，用于发现域名所属 DNS。
+ * - serverLookup：基于 DNS 服务器地址创建 TXT 查询函数。
  * - fallbackLookups：备用 DNS 查询函数列表，按优先级顺序执行。
  * 返回值：首个成功解析器返回的 TXT 记录数组。
  * 失败条件：全部解析器均失败时返回最后一次错误。
  */
-func lookupTXTWithResolvers(ctx context.Context, name string, systemLookup txtLookupFunc, fallbackLookups []txtLookupFunc) ([]string, error) {
+func lookupTXTWithResolvers(ctx context.Context, name string, systemLookup txtLookupFunc, lookupNS nsLookupFunc, serverLookup dnsServerLookupFactory, fallbackLookups []txtLookupFunc) ([]string, error) {
 	records, err := systemLookup(ctx, name)
 	if len(records) > 0 || err == nil {
 		return records, err
 	}
 
 	lastErr := err
+	nameservers, nsErr := discoverNameServers(ctx, name, lookupNS)
+	if nsErr == nil {
+		for _, server := range nameservers {
+			records, err = serverLookup(server)(ctx, name)
+			if len(records) > 0 || err == nil {
+				return records, err
+			}
+			lastErr = err
+		}
+	} else {
+		lastErr = errors.Join(lastErr, nsErr)
+	}
+
 	for _, lookup := range fallbackLookups {
 		records, err = lookup(ctx, name)
 		if len(records) > 0 || err == nil {
@@ -274,6 +292,62 @@ func lookupTXTWithResolvers(ctx context.Context, name string, systemLookup txtLo
 	}
 
 	return nil, lastErr
+}
+
+/**
+ * resolverTXTLookup 创建指向指定 DNS 服务器的 TXT 查询函数。
+ *
+ * 参数：
+ * - server：DNS 服务器地址，例如 "223.5.5.5:53"。
+ * 返回值：使用该 DNS 服务器查询 TXT 的函数。
+ * 失败条件：无；网络错误会在实际查询时返回。
+ */
+func resolverTXTLookup(server string) txtLookupFunc {
+	return publicDNSResolver(server).LookupTXT
+}
+
+/**
+ * discoverNameServers 从完整记录名逐级查找可用 NS 服务器。
+ *
+ * 参数：
+ * - ctx：业务操作上下文。
+ * - name：完整 TXT 记录名。
+ * - lookupNS：NS 查询函数。
+ * 返回值：带 53 端口的 DNS 服务器地址列表。
+ * 失败条件：所有父级域名都没有返回 NS 时返回最后一次查询错误。
+ */
+func discoverNameServers(ctx context.Context, name string, lookupNS nsLookupFunc) ([]string, error) {
+	labels := strings.Split(strings.TrimSuffix(storage.NormalizeDomain(name), "."), ".")
+	if len(labels) < 2 {
+		return nil, errors.New("dns name is too short")
+	}
+
+	var lastErr error
+	for index := 0; index < len(labels)-1; index++ {
+		candidate := strings.Join(labels[index:], ".")
+		records, err := lookupNS(ctx, candidate)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		servers := make([]string, 0, len(records))
+		for _, record := range records {
+			host := strings.TrimSuffix(storage.NormalizeDomain(record.Host), ".")
+			if host == "" {
+				continue
+			}
+			servers = append(servers, net.JoinHostPort(host, "53"))
+		}
+		if len(servers) > 0 {
+			return servers, nil
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("no nameserver found")
 }
 
 /**
@@ -338,10 +412,11 @@ func normalizeVerificationRecordName(name string, domain string) (string, bool) 
  * - id：域名 ID。
  * - domain：可选新域名。
  * - requestedOwnerID：管理员可指定的所有者 ID；nil 表示全局域名。
+ * - disabled：可选禁用状态；nil 表示保持现状。
  * 返回值：已更新域名。
  * 失败条件：域名不存在、权限不足、域名非法或保存失败时返回错误。
  */
-func (service *DomainService) UpdateDomain(ctx context.Context, user storage.User, id uint, domain string, requestedOwnerID *uint) (storage.AcceptedDomain, error) {
+func (service *DomainService) UpdateDomain(ctx context.Context, user storage.User, id uint, domain string, requestedOwnerID *uint, disabled *bool) (storage.AcceptedDomain, error) {
 	item, err := service.domains.FindByID(ctx, id)
 	if err != nil {
 		return storage.AcceptedDomain{}, err
@@ -359,6 +434,10 @@ func (service *DomainService) UpdateDomain(ctx context.Context, user storage.Use
 	}
 	if user.Role == storage.RoleAdmin {
 		item.OwnerUserID = requestedOwnerID
+	}
+	if disabled != nil {
+		// 普通用户只能禁用自己拥有的域名；全局域名仍由管理员控制。
+		item.Disabled = *disabled
 	}
 
 	return service.domains.Save(ctx, item)

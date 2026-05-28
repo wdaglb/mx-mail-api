@@ -55,6 +55,14 @@ func TestLookupTXTWithFallbackUsesPublicDNS(t *testing.T) {
 		func(context.Context, string) ([]string, error) {
 			return nil, errors.New("system resolver unavailable")
 		},
+		func(context.Context, string) ([]*net.NS, error) {
+			return nil, errors.New("nameserver lookup unavailable")
+		},
+		func(string) txtLookupFunc {
+			return func(context.Context, string) ([]string, error) {
+				return nil, errors.New("unexpected discovered dns lookup")
+			}
+		},
 		[]txtLookupFunc{
 			func(context.Context, string) ([]string, error) {
 				return []string{"6023bb91a9700cb1f484d78f8b885a66"}, nil
@@ -66,6 +74,80 @@ func TestLookupTXTWithFallbackUsesPublicDNS(t *testing.T) {
 	}
 	if len(records) != 1 || records[0] != "6023bb91a9700cb1f484d78f8b885a66" {
 		t.Fatalf("unexpected fallback records: %#v", records)
+	}
+}
+
+/**
+ * TestLookupTXTWithResolversUsesDiscoveredDNS 校验 TXT 验证会优先查询域名所属 DNS。
+ *
+ * 参数：Go 测试框架注入 t。
+ * 返回值：无。
+ * 失败条件：NS 发现未执行，或所属 DNS 返回 TXT 后仍继续走公共 DNS 时测试失败。
+ */
+func TestLookupTXTWithResolversUsesDiscoveredDNS(t *testing.T) {
+	records, err := lookupTXTWithResolvers(
+		context.Background(),
+		"ltef7of24ugg.edss.bbroot.com",
+		func(context.Context, string) ([]string, error) {
+			return nil, errors.New("system resolver unavailable")
+		},
+		func(_ context.Context, name string) ([]*net.NS, error) {
+			if name != "ltef7of24ugg.edss.bbroot.com" {
+				t.Fatalf("expected first NS lookup to use full record name, got %s", name)
+			}
+			return []*net.NS{{Host: "ns1.dnshe.com."}}, nil
+		},
+		func(server string) txtLookupFunc {
+			if server != "ns1.dnshe.com:53" {
+				t.Fatalf("unexpected discovered dns server: %s", server)
+			}
+			return func(_ context.Context, name string) ([]string, error) {
+				if name != "ltef7of24ugg.edss.bbroot.com" {
+					t.Fatalf("unexpected TXT lookup name: %s", name)
+				}
+				return []string{"6023bb91a9700cb1f484d78f8b885a66"}, nil
+			}
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("expected discovered dns lookup to pass, got %v", err)
+	}
+	if len(records) != 1 || records[0] != "6023bb91a9700cb1f484d78f8b885a66" {
+		t.Fatalf("unexpected discovered dns records: %#v", records)
+	}
+}
+
+/**
+ * TestDiscoverNameServersWalksParentDomains 校验从完整记录名逐级发现父级 DNS。
+ *
+ * 参数：Go 测试框架注入 t。
+ * 返回值：无。
+ * 失败条件：没有逐级查找，或返回的 DNS 地址没有补齐 53 端口时测试失败。
+ */
+func TestDiscoverNameServersWalksParentDomains(t *testing.T) {
+	queried := make([]string, 0)
+	servers, err := discoverNameServers(context.Background(), "ltef7of24ugg.edss.bbroot.com", func(_ context.Context, name string) ([]*net.NS, error) {
+		queried = append(queried, name)
+		if name == "bbroot.com" {
+			return []*net.NS{{Host: "ns1.dnshe.com."}, {Host: "ns3.dnshe.com."}}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: name}
+	})
+	if err != nil {
+		t.Fatalf("expected nameserver discovery to pass, got %v", err)
+	}
+	if len(servers) != 2 || servers[0] != "ns1.dnshe.com:53" || servers[1] != "ns3.dnshe.com:53" {
+		t.Fatalf("unexpected discovered nameservers: %#v", servers)
+	}
+	want := []string{"ltef7of24ugg.edss.bbroot.com", "edss.bbroot.com", "bbroot.com"}
+	if len(queried) != len(want) {
+		t.Fatalf("unexpected ns lookup sequence: %#v", queried)
+	}
+	for index, value := range want {
+		if queried[index] != value {
+			t.Fatalf("unexpected ns lookup sequence: %#v", queried)
+		}
 	}
 }
 
@@ -83,6 +165,14 @@ func TestLookupTXTWithFallbackReturnsLastError(t *testing.T) {
 		"missing.example",
 		func(context.Context, string) ([]string, error) {
 			return nil, errors.New("system resolver unavailable")
+		},
+		func(context.Context, string) ([]*net.NS, error) {
+			return nil, errors.New("nameserver lookup unavailable")
+		},
+		func(string) txtLookupFunc {
+			return func(context.Context, string) ([]string, error) {
+				return nil, errors.New("unexpected discovered dns lookup")
+			}
 		},
 		[]txtLookupFunc{
 			func(context.Context, string) ([]string, error) {

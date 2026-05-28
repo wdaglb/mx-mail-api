@@ -23,9 +23,13 @@ export function normalizeTemporaryMailboxTTLMinutes(
  *
  * 参数：
  * - domain：后端返回的域名规则。
- * 返回值：不包含已废弃 "*" 通配写法的域名返回 true。
+ * - disabled：后端返回的禁用状态。
+ * 返回值：未禁用且不包含已废弃 "*" 通配写法的域名返回 true。
  * 失败条件：无。
  */
-export function isTemporaryMailboxSelectableDomain(domain: string) {
-  return Boolean(domain) && !domain.includes('*');
+export function isTemporaryMailboxSelectableDomain(
+  domain: string,
+  disabled?: boolean,
+) {
+  return Boolean(domain) && !disabled && !domain.includes('*');
 }

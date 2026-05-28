@@ -17,6 +17,7 @@ export type Domain = {
   domain: string;
   owner_user_id: number | null;
   owner_name: string;
+  disabled: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -80,6 +81,7 @@ export type TemporaryMailboxFormValues = {
 export type DomainFormValues = {
   domain: string;
   owner_user_id?: number | null;
+  disabled?: boolean;
   verification_name?: string;
   verification_value?: string;
 };

@@ -317,6 +317,65 @@ func TestTemporaryMailboxRandomDomain(t *testing.T) {
 }
 
 /**
+ * TestDisabledDomainCannotLeaseOrReceive 校验禁用域名不再用于邮箱申请和 SMTP 收件。
+ *
+ * 参数：Go 测试框架注入 t。
+ * 返回值：无。
+ * 失败条件：禁用域名仍能申请邮箱、随机选择或通过收件域名匹配时测试失败。
+ */
+func TestDisabledDomainCannotLeaseOrReceive(t *testing.T) {
+	router, db := newTestRouter(t)
+
+	adminToken := loginAndToken(t, router, "admin", "admin123456")
+	userID := createUser(t, router, adminToken, "alice", "password123", storage.RoleUser)
+	userToken := loginAndToken(t, router, "alice", "password123")
+	createDomain(t, router, userToken, "disabled.test", uintPtr(userID), http.StatusCreated)
+	createDomain(t, router, userToken, "enabled.test", uintPtr(userID), http.StatusCreated)
+
+	var disabledDomain storage.AcceptedDomain
+	if err := db.Where("domain = ?", "disabled.test").First(&disabledDomain).Error; err != nil {
+		t.Fatalf("failed to load disabled domain: %v", err)
+	}
+	disabled := true
+	resp := performJSON(t, router, http.MethodPut, "/api/domains/"+strconv.FormatUint(uint64(disabledDomain.ID), 10), userToken, domainRequest{
+		Domain:   "disabled.test",
+		Disabled: &disabled,
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected disable domain status 200, got %d body %s", resp.Code, resp.Body.String())
+	}
+
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{
+		Domain: "disabled.test",
+	})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected disabled domain lease status 400, got %d body %s", resp.Code, resp.Body.String())
+	}
+
+	resp = performJSON(t, router, http.MethodPost, "/api/temporary-mailboxes", userToken, temporaryMailboxRequest{})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected random lease to use enabled domain, got %d body %s", resp.Code, resp.Body.String())
+	}
+	var created struct {
+		Item temporaryMailboxCreateResponse `json:"item"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("failed to parse random lease response: %v", err)
+	}
+	if created.Item.Domain != "enabled.test" {
+		t.Fatalf("expected random lease to skip disabled domain, got %#v", created.Item)
+	}
+
+	patterns, err := repository.NewDomainRepository(db).AcceptedPatterns(context.Background())
+	if err != nil {
+		t.Fatalf("failed to load accepted patterns: %v", err)
+	}
+	if len(patterns) != 1 || patterns[0] != "enabled.test" {
+		t.Fatalf("expected only enabled domain in SMTP patterns, got %#v", patterns)
+	}
+}
+
+/**
  * newTestRouter 创建由内存 SQLite 支撑的隔离 API 路由。
  *
  * 参数：

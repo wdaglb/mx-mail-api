@@ -134,6 +134,7 @@ type domainRequest struct {
 	OwnerUserID       *uint  `json:"owner_user_id"`
 	VerificationName  string `json:"verification_name"`
 	VerificationValue string `json:"verification_value"`
+	Disabled          *bool  `json:"disabled"`
 }
 
 type domainVerificationRequest struct {
@@ -168,6 +169,7 @@ type domainResponse struct {
 	Domain      string    `json:"domain"`
 	OwnerUserID *uint     `json:"owner_user_id"`
 	OwnerName   string    `json:"owner_name"`
+	Disabled    bool      `json:"disabled"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -710,7 +712,7 @@ func (server *Server) updateDomain(ctx *gin.Context) {
 		return
 	}
 
-	item, err := server.domains.UpdateDomain(ctx.Request.Context(), user, id, req.Domain, req.OwnerUserID)
+	item, err := server.domains.UpdateDomain(ctx.Request.Context(), user, id, req.Domain, req.OwnerUserID, req.Disabled)
 	if errors.Is(err, service.ErrForbidden) {
 		writeError(ctx, http.StatusForbidden, "forbidden", "cannot update another user's domain")
 		return
@@ -956,6 +958,7 @@ func toDomainResponse(domain storage.AcceptedDomain) domainResponse {
 		Domain:      domain.Domain,
 		OwnerUserID: domain.OwnerUserID,
 		OwnerName:   ownerName,
+		Disabled:    domain.Disabled,
 		CreatedAt:   domain.CreatedAt,
 		UpdatedAt:   domain.UpdatedAt,
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -63,6 +64,7 @@ func main() {
 		Messages: messageService,
 	}
 	go func() {
+		log.Printf("smtp service starting addr=%q hostname=%q", cfg.SMTP.Addr, cfg.SMTP.Hostname)
 		errs <- smtp.ListenAndServe(ctx)
 	}()
 
@@ -71,6 +73,7 @@ func main() {
 		Handler: setupRouter(apiServer),
 	}
 	go func() {
+		log.Printf("http service starting addr=%q", cfg.HTTP.Addr)
 		// Gin 的 Router.Run 不方便外部优雅停止；这里显式使用 http.Server 以便收到系统信号后关闭。
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errs <- err

@@ -61,7 +61,7 @@ func (repo *DomainRepository) ListVisible(ctx context.Context, user storage.User
  */
 func (repo *DomainRepository) ListOwnedOrGlobal(ctx context.Context, userID uint) ([]storage.AcceptedDomain, error) {
 	var domains []storage.AcceptedDomain
-	err := repo.db.WithContext(ctx).Where("owner_user_id = ? OR owner_user_id IS NULL", userID).Find(&domains).Error
+	err := repo.db.WithContext(ctx).Where("(owner_user_id = ? OR owner_user_id IS NULL) AND disabled = ?", userID, false).Find(&domains).Error
 	return domains, err
 }
 
@@ -75,7 +75,7 @@ func (repo *DomainRepository) ListOwnedOrGlobal(ctx context.Context, userID uint
  */
 func (repo *DomainRepository) AcceptedPatterns(ctx context.Context) ([]string, error) {
 	var domains []storage.AcceptedDomain
-	if err := repo.db.WithContext(ctx).Order("domain ASC").Find(&domains).Error; err != nil {
+	if err := repo.db.WithContext(ctx).Where("disabled = ?", false).Order("domain ASC").Find(&domains).Error; err != nil {
 		return nil, err
 	}
 

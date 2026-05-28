@@ -78,7 +78,9 @@ export function TemporaryMailboxPanel({
   );
   const selectableDomains = useMemo(
     () =>
-      domains.filter((domain) => isTemporaryMailboxSelectableDomain(domain.domain)),
+      domains.filter((domain) =>
+        isTemporaryMailboxSelectableDomain(domain.domain, domain.disabled),
+      ),
     [domains],
   );
   const inboxMessages = useMemo(() => {

@@ -53,9 +53,11 @@ func (server *Server) ListenAndServe(ctx context.Context) error {
 
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
+		log.Printf("smtp listen failed addr=%q error=%q", server.Addr, err.Error())
 		return err
 	}
 	defer listener.Close()
+	log.Printf("smtp listen started addr=%q hostname=%q", listener.Addr().String(), server.hostname())
 
 	go func() {
 		<-ctx.Done()
@@ -83,9 +85,11 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				log.Printf("smtp listen stopped addr=%q", listener.Addr().String())
 				return nil
 			}
 
+			log.Printf("smtp accept failed addr=%q error=%q", listener.Addr().String(), err.Error())
 			return err
 		}
 
@@ -93,7 +97,7 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		go func() {
 			defer wg.Done()
 			if err := server.HandleConn(ctx, conn); err != nil {
-				log.Printf("smtp session ended with error: %v", err)
+				log.Printf("smtp session ended error=%q", err.Error())
 			}
 		}()
 	}
@@ -114,6 +118,10 @@ func (server *Server) HandleConn(ctx context.Context, conn net.Conn) error {
 	session := newSession(server, conn.RemoteAddr().String())
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
+	log.Printf("smtp connection opened remote=%q local=%q", session.remoteAddr, conn.LocalAddr().String())
+	defer func(startedAt time.Time) {
+		log.Printf("smtp connection closed remote=%q helo=%q duration_ms=%d", session.remoteAddr, session.heloName, time.Since(startedAt).Milliseconds())
+	}(time.Now())
 
 	if err := session.writeLine(conn, writer, "220 "+server.hostname()+" ESMTP mx-mail-api ready"); err != nil {
 		return err
@@ -232,9 +240,11 @@ func (session *smtpSession) handleLine(ctx context.Context, conn net.Conn, reade
 		session.resetEnvelope()
 		session.heloName = strings.TrimSpace(argument)
 		if session.heloName == "" {
+			log.Printf("smtp helo rejected remote=%q command=%q reason=%q", session.remoteAddr, command, "empty_hostname")
 			return false, session.writeLine(conn, writer, "501 HELO/EHLO requires a hostname")
 		}
 
+		log.Printf("smtp helo accepted remote=%q command=%q helo=%q", session.remoteAddr, command, session.heloName)
 		if command == "EHLO" {
 			// 多行 EHLO 响应为后续能力扩展保留标准格式；当前 MVP 不声明 AUTH/TLS 等未实现能力。
 			if err := session.writeLine(conn, writer, "250-"+session.server.hostname()); err != nil {
@@ -246,11 +256,13 @@ func (session *smtpSession) handleLine(ctx context.Context, conn net.Conn, reade
 		return false, session.writeLine(conn, writer, "250 "+session.server.hostname())
 	case "MAIL":
 		if session.heloName == "" {
+			log.Printf("smtp mail_from rejected remote=%q reason=%q", session.remoteAddr, "missing_helo")
 			return false, session.writeLine(conn, writer, "503 Send HELO/EHLO first")
 		}
 
 		address, ok := parseAddressArgument(argument, "FROM:")
 		if !ok {
+			log.Printf("smtp mail_from rejected remote=%q helo=%q reason=%q argument=%q", session.remoteAddr, session.heloName, "invalid_address", argument)
 			return false, session.writeLine(conn, writer, "501 MAIL requires FROM:<address>")
 		}
 
@@ -260,11 +272,13 @@ func (session *smtpSession) handleLine(ctx context.Context, conn net.Conn, reade
 		return false, session.writeLine(conn, writer, "250 Sender accepted")
 	case "RCPT":
 		if session.mailFrom == "" {
+			log.Printf("smtp rcpt_to rejected remote=%q helo=%q reason=%q", session.remoteAddr, session.heloName, "missing_mail_from")
 			return false, session.writeLine(conn, writer, "503 Send MAIL FROM first")
 		}
 
 		address, ok := parseAddressArgument(argument, "TO:")
 		if !ok {
+			log.Printf("smtp rcpt_to rejected remote=%q helo=%q from=%q reason=%q argument=%q", session.remoteAddr, session.heloName, session.mailFrom, "invalid_address", argument)
 			return false, session.writeLine(conn, writer, "501 RCPT requires TO:<address>")
 		}
 		accepted, err := session.server.Messages.AcceptsRecipient(ctx, address)
@@ -286,15 +300,18 @@ func (session *smtpSession) handleLine(ctx context.Context, conn net.Conn, reade
 		return false, session.writeLine(conn, writer, "250 Recipient accepted")
 	case "DATA":
 		if session.mailFrom == "" || len(session.rcptTo) == 0 {
+			log.Printf("smtp data rejected remote=%q helo=%q from=%q rcpt_count=%d reason=%q", session.remoteAddr, session.heloName, session.mailFrom, len(session.rcptTo), "missing_envelope")
 			return false, session.writeLine(conn, writer, "503 Need MAIL FROM and RCPT TO before DATA")
 		}
 
+		log.Printf("smtp data started remote=%q helo=%q from=%q rcpt_count=%d", session.remoteAddr, session.heloName, session.mailFrom, len(session.rcptTo))
 		if err := session.writeLine(conn, writer, "354 End data with <CR><LF>.<CR><LF>"); err != nil {
 			return false, err
 		}
 
 		data, err := readData(reader)
 		if err != nil {
+			log.Printf("smtp data read failed remote=%q helo=%q from=%q rcpt_count=%d error=%q", session.remoteAddr, session.heloName, session.mailFrom, len(session.rcptTo), err.Error())
 			return false, err
 		}
 

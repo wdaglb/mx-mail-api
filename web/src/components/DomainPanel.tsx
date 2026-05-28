@@ -7,7 +7,9 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
+  Tag,
   Typography,
   message,
 } from 'antd';
@@ -96,6 +98,7 @@ export function DomainPanel({
   const [form] = Form.useForm<DomainFormValues>();
   const [editing, setEditing] = useState<Domain | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [verification, setVerification] = useState<DomainVerification | null>(
     null,
   );
@@ -104,11 +107,13 @@ export function DomainPanel({
   const watchedDomain = Form.useWatch('domain', form);
 
   const save = async (values: DomainFormValues) => {
+    setSubmitting(true);
     try {
       const payload = {
         ...values,
         // 前端用 0 代表“所有人”，提交前转成 null，避免后端误解为真实用户 ID。
         owner_user_id: values.owner_user_id === 0 ? null : values.owner_user_id,
+        disabled: Boolean(values.disabled),
       };
       if (editing) {
         await api.put(`/api/domains/${editing.id}`, payload);
@@ -124,6 +129,8 @@ export function DomainPanel({
       await onChanged();
     } catch (error) {
       message.error(errorMessage(error));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -180,6 +187,7 @@ export function DomainPanel({
     form.setFieldsValue({
       domain: '',
       owner_user_id: isAdmin ? 0 : undefined,
+      disabled: false,
       verification_name: '',
       verification_value: '',
     });
@@ -194,6 +202,7 @@ export function DomainPanel({
     form.setFieldsValue({
       domain: row.domain,
       owner_user_id: row.owner_user_id ?? 0,
+      disabled: row.disabled,
     });
     setModalOpen(true);
   };
@@ -204,6 +213,12 @@ export function DomainPanel({
       title: '所有者',
       dataIndex: 'owner_name',
       render: (_, row) => row.owner_name || row.owner_user_id || '所有人',
+    },
+    {
+      title: '状态',
+      dataIndex: 'disabled',
+      render: (disabled: boolean) =>
+        disabled ? <Tag color="red">已禁用</Tag> : <Tag color="green">启用中</Tag>,
     },
     {
       title: '创建时间',
@@ -266,8 +281,13 @@ export function DomainPanel({
         title={editing ? '编辑域名' : '新增域名'}
         open={modalOpen}
         okText={editing ? '保存域名' : '新增域名'}
+        confirmLoading={submitting}
         cancelText="取消"
+        maskClosable={!submitting}
         onCancel={() => {
+          if (submitting) {
+            return;
+          }
           setModalOpen(false);
           setEditing(null);
           setVerification(null);
@@ -329,6 +349,14 @@ export function DomainPanel({
               />
             </Form.Item>
           ) : null}
+          <Form.Item
+            name="disabled"
+            label="是否禁用"
+            valuePropName="checked"
+            tooltip="禁用后，该域名不会出现在邮箱申请列表中，也不会再接收新邮件。"
+          >
+            <Switch checkedChildren="禁用" unCheckedChildren="启用" />
+          </Form.Item>
         </Form>
       </Modal>
     </Card>
