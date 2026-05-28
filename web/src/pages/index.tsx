@@ -1,5 +1,12 @@
 import { Layout, Menu, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom';
 import { ApiKeyModal } from '../components/ApiKeyModal';
 import { DomainPanel } from '../components/DomainPanel';
 import { MessagePanel } from '../components/MessagePanel';
@@ -20,7 +27,7 @@ import { LoginPage } from './LoginPage';
 const { Header, Sider, Content } = Layout;
 const tokenKey = 'mx-mail-api-token';
 
-const defaultMenuKey = 'temporary-mailbox';
+const defaultMenuPath = '/mailboxes';
 
 /**
  * HomePage 渲染需要登录的后台首页。
@@ -30,6 +37,8 @@ const defaultMenuKey = 'temporary-mailbox';
  * 失败条件：API 失败会通过 Ant Design message 展示。
  */
 export function HomePage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [token, setToken] = useState(
     () => localStorage.getItem(tokenKey) || '',
   );
@@ -46,7 +55,6 @@ export function HomePage() {
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
   const [apiKeyToken, setApiKeyToken] = useState('');
   const [apiKeyLoading, setApiKeyLoading] = useState(false);
-  const [selectedMenuKey, setSelectedMenuKey] = useState(defaultMenuKey);
 
   const isAdmin = currentUser?.role === 'admin';
   const api = useMemo(() => createApiClient(token), [token]);
@@ -173,66 +181,15 @@ export function HomePage() {
   }
 
   const menuItems = [
-    { key: 'temporary-mailbox', label: '申请邮箱' },
-    { key: 'messages', label: '收件记录' },
-    { key: 'domains', label: '域名管理' },
-    ...(isAdmin ? [{ key: 'users', label: '用户管理' }] : []),
+    { key: defaultMenuPath, label: '申请邮箱' },
+    { key: '/messages', label: '收件记录' },
+    { key: '/domains', label: '域名管理' },
+    ...(isAdmin ? [{ key: '/users', label: '用户管理' }] : []),
   ];
-  const activeMenuKey =
-    selectedMenuKey === 'users' && !isAdmin ? defaultMenuKey : selectedMenuKey;
-
-  const pageContent = (() => {
-    switch (activeMenuKey) {
-      case 'messages':
-        return (
-          <MessagePanel
-            api={api}
-            messages={mailMessages}
-            loading={loading}
-            onRefresh={refresh}
-          />
-        );
-      case 'domains':
-        return (
-          <DomainPanel
-            api={api}
-            domains={domains}
-            users={users}
-            currentUser={currentUser}
-            publicConfig={publicConfig}
-            loading={loading}
-            onChanged={refresh}
-          />
-        );
-      case 'users':
-        if (isAdmin) {
-          return (
-            <UserPanel
-              api={api}
-              users={users}
-              loading={loading}
-              onChanged={refresh}
-            />
-          );
-        }
-
-        // 权限变化后如果仍停留在管理员菜单，回退到默认页，避免渲染无权限内容。
-        return null;
-      case 'temporary-mailbox':
-      default:
-        return (
-          <TemporaryMailboxPanel
-            api={api}
-            currentUser={currentUser}
-            domains={domains}
-            loading={loading}
-            mailboxes={temporaryMailboxes}
-            messages={mailMessages}
-            onChanged={refresh}
-          />
-        );
-    }
-  })();
+  const selectableMenuPaths = menuItems.map((item) => item.key);
+  const activeMenuPath = selectableMenuPaths.includes(location.pathname)
+    ? location.pathname
+    : defaultMenuPath;
 
   return (
     <Layout className="app-shell">
@@ -276,12 +233,79 @@ export function HomePage() {
         >
           <Menu
             mode="inline"
-            selectedKeys={[activeMenuKey]}
+            selectedKeys={[activeMenuPath]}
             items={menuItems}
-            onClick={({ key }) => setSelectedMenuKey(key)}
+            onClick={({ key }) => navigate(key)}
           />
         </Sider>
-        <Content className="app-content">{pageContent}</Content>
+        <Content className="app-content">
+          {/* 后台页面交给 react-router 渲染，刷新浏览器后可按 URL 恢复当前菜单页。 */}
+          <Routes>
+            <Route index element={<Navigate to={defaultMenuPath} replace />} />
+            <Route
+              path="mailboxes"
+              element={
+                <TemporaryMailboxPanel
+                  api={api}
+                  currentUser={currentUser}
+                  domains={domains}
+                  loading={loading}
+                  mailboxes={temporaryMailboxes}
+                  messages={mailMessages}
+                  onChanged={refresh}
+                />
+              }
+            />
+            <Route
+              path="messages"
+              element={
+                <MessagePanel
+                  api={api}
+                  messages={mailMessages}
+                  loading={loading}
+                  onRefresh={refresh}
+                />
+              }
+            />
+            <Route
+              path="domains"
+              element={
+                <DomainPanel
+                  api={api}
+                  domains={domains}
+                  users={users}
+                  currentUser={currentUser}
+                  publicConfig={publicConfig}
+                  loading={loading}
+                  onChanged={refresh}
+                />
+              }
+            />
+            {isAdmin ? (
+              <Route
+                path="users"
+                element={
+                  <UserPanel
+                    api={api}
+                    users={users}
+                    loading={loading}
+                    onChanged={refresh}
+                  />
+                }
+              />
+            ) : (
+              // 普通用户直接回到可访问页面，避免刷新 /users 时看到空白内容。
+              <Route
+                path="users"
+                element={<Navigate to={defaultMenuPath} replace />}
+              />
+            )}
+            <Route
+              path="*"
+              element={<Navigate to={defaultMenuPath} replace />}
+            />
+          </Routes>
+        </Content>
       </Layout>
     </Layout>
   );
